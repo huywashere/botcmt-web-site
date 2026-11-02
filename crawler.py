@@ -11,6 +11,7 @@ from comment_generator import CommentGenerator
 from comment_poster import CommentPoster
 from telegram_notifier import TelegramNotifier
 from history_manager import CommentHistoryManager
+from ad_blocker import AdBlockerPro
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -46,6 +47,14 @@ class GoogleTopBot:
         dedup_file = dedup_cfg.get("history_file", "output/commented_history.json")
         self.history_mgr = CommentHistoryManager(history_file=dedup_file)
         self.force_recomment = dedup_cfg.get("force_recomment", False)
+
+        # Khởi tạo bộ chặn quảng cáo toàn diện AdBlocker Pro
+        ad_cfg = self.config.get("ad_blocker", {})
+        self.ad_blocker = AdBlockerPro(
+            enabled=ad_cfg.get("enabled", True),
+            block_popups=ad_cfg.get("block_popups", True),
+            log_fn=self.log
+        )
 
         # Tập hợp các domain đã bình luận
         self.commented_domains = set()
@@ -128,114 +137,21 @@ class GoogleTopBot:
 
     def _setup_ad_and_popup_protection(self, context: BrowserContext):
         """
-        Bảo vệ tự động chống quảng cáo popup nhảy tab và chặn các domain quảng cáo rác.
-        Tự động đóng mọi popup ngoài ý muốn để bot không bị chuyển hướng kẹt trang.
+        Bảo vệ tự động chống quảng cáo popup nhảy tab và chặn các domain quảng cáo rác qua AdBlockerPro.
         """
-        ad_cfg = self.config.get("ad_blocker", {})
-        if not ad_cfg.get("enabled", True):
+        if not self.ad_blocker.enabled:
             return
 
-        self.log("🛡️ Đã kích hoạt bộ lọc quảng cáo & chặn popup nhảy tab tự động", "dim")
-
-        # 1. Chặn request tới các mạng quảng cáo rác
-        ad_patterns = [
-            "*doubleclick.net*",
-            "*google-analytics.com*",
-            "*popads*",
-            "*exoclick*",
-            "*adnxs*",
-            "*adcash*",
-            "*histats*",
-            "*propellerads*",
-            "*mgid*",
-            "*taboola*"
-        ]
-        for pat in ad_patterns:
-            try:
-                context.route(f"**/{pat}/**", lambda route: route.abort())
-            except Exception:
-                pass
-
-        # 2. Tự động đóng các tab popup nhảy trang bất ngờ (Popunder / Popup)
-        if ad_cfg.get("block_popups", True):
-            def handle_new_page(new_page: Page):
-                try:
-                    time.sleep(0.5)
-                    new_url = new_page.url or ""
-                    allowed = self.config.get("movie_filter", {}).get("allowed_domains", ["motchill", "motphim", "phimmoi", "rophim"])
-                    is_allowed = any(dom in new_url.lower() for dom in allowed) or "google." in new_url.lower()
-                    if not is_allowed or "about:blank" in new_url:
-                        self.log(f"      🚫 Đã tự động đóng Popup quảng cáo: {new_url[:55]}...", "dim")
-                        new_page.close()
-                except Exception:
-                    try:
-                        new_page.close()
-                    except Exception:
-                        pass
-
-            context.on("page", handle_new_page)
+        self.log("🛡️ Đã kích hoạt AdBlocker Pro: Chặn 60+ mạng quảng cáo, Popunder, và Anti-Adblock", "cyan")
+        allowed = self.config.get("movie_filter", {}).get("allowed_domains", ["motchill", "motphim", "phimmoi", "rophim"])
+        self.ad_blocker.setup_context(context, allowed_domains=allowed)
 
     def _dismiss_ad_overlays(self, page: Page):
         """
-        Bảo vệ siêu cấp: Tìm và bấm nút [X] tắt quảng cáo, nhấn phím ESC
+        Bảo vệ siêu cấp qua AdBlockerPro: Tìm và bấm nút [X] tắt quảng cáo, nhấn phím ESC
         và xóa bỏ mọi banner quảng cáo nổi che khuất nội dung hoặc nút bình luận.
         """
-        try:
-            # 1. Nhấn ESC để đóng các modal popup quảng cáo
-            page.keyboard.press("Escape")
-        except Exception:
-            pass
-
-        try:
-            # 2. Tìm và click nút tắt [X] nếu có
-            close_selectors = [
-                ".close-ad", ".btn-close", ".close-popup", ".ad-close",
-                "button:has-text('Đóng')", "span:has-text('Đóng')", "a:has-text('Đóng')",
-                "button:has-text('Bỏ qua')", "a:has-text('Bỏ qua')", ".skip-ad",
-                "[aria-label='Close']", ".modal-close", ".popup-close"
-            ]
-            for sel in close_selectors:
-                btn = page.locator(sel).first
-                if btn.count() > 0 and btn.is_visible():
-                    btn.click(timeout=1000)
-                    time.sleep(0.3)
-                    break
-        except Exception:
-            pass
-
-        try:
-            # 3. Chạy script diệt triệt để các banner, iframe quảng cáo và overlay z-index cao
-            page.evaluate("""() => {
-                const selectors = [
-                    '.floating-banner', '.ads-overlay', '#popup-ad', '.popup-wrapper',
-                    'div[id*="ad-"]', 'div[class*="popup-banner"]', '.ad-box',
-                    'iframe[src*="ad"]', '.banner-top', '.banner-bottom', '.ad-sticky',
-                    '#banner-bottom', '.adsbox', '.qc-container', '.banner-qc',
-                    '.float-ck', '#float_banner'
-                ];
-                selectors.forEach(sel => {
-                    document.querySelectorAll(sel).forEach(el => {
-                        el.style.display = 'none';
-                        el.remove();
-                    });
-                });
-
-                // Diệt các div đè toàn màn hình có z-index cao che nút
-                document.querySelectorAll('div, section, aside').forEach(el => {
-                    const style = window.getComputedStyle(el);
-                    if ((style.position === 'fixed' || style.position === 'absolute') && parseInt(style.zIndex || '0') >= 999) {
-                        const rect = el.getBoundingClientRect();
-                        if (rect.width * rect.height > window.innerWidth * window.innerHeight * 0.4 || rect.bottom >= window.innerHeight - 5) {
-                            if (!el.querySelector('video') && !el.querySelector('header') && !el.id.includes('player')) {
-                                el.style.display = 'none';
-                                el.remove();
-                            }
-                        }
-                    }
-                });
-            }""")
-        except Exception:
-            pass
+        self.ad_blocker.clean_page(page)
 
     def _simulate_video_playback(self, page: Page):
         """
@@ -624,6 +540,7 @@ class GoogleTopBot:
 
             domain_brand = self._get_domain_brand(landing_url, allowed_domains)
             self.log(f"   🌐 Đang mở hệ thống web: [bold cyan]{domain_brand.upper()}[/bold cyan] ({landing_url})", "blue")
+            self._dismiss_ad_overlays(new_page)
 
             # Tìm danh sách phim có TƯƠNG TÁC CAO NHẤT trên web này để bình luận
             hot_movies = []
@@ -652,7 +569,8 @@ class GoogleTopBot:
                     self.log(f"\n   👉 [{domain_brand.upper()} - Phim #{sub_idx}] {target_movie_title} [cyan]({category} | {views_info})[/cyan]", "cyan")
                     try:
                         new_page.goto(target_movie_url, wait_until="domcontentloaded", timeout=20000)
-                        time.sleep(1.5)
+                        self._dismiss_ad_overlays(new_page)
+                        time.sleep(1.0)
                     except Exception as e:
                         self.log(f"      ⚠️ Không thể tải phim này: {e}", "dim")
                         continue

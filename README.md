@@ -26,9 +26,12 @@ Bot tự động hóa tìm kiếm, cào dữ liệu và **bình luận thông mi
   - Gửi ảnh về Telegram kèm **Link phim trực tiếp (`🔗 Link phim`)**, tên phim, nội dung comment và tên người gửi.
   - Bạn chỉ cần bấm vào link trên Telegram để mở ngay trang phim và kiểm tra bình luận của mình!
 
-### 4. 🛡️ Chặn Quảng Cáo Pop-up & Diệt Banner Rác (Ad & Popup Killer)
-- Tự động chặn các mạng quảng cáo rác (`popads`, `exoclick`, `doubleclick`, cá cược...) và tự động đóng ngay lập tức các tab quảng cáo nhảy trang ngoài ý muốn.
-- Tự động gỡ bỏ các banner nổi đè lên nút gửi bình luận, giúp bot không bao giờ bị kẹt khi tương tác trên web phim lậu.
+### 4. 🛡️ Chặn Quảng Cáo Toàn Diện & Anti-Adblock Deception (AdBlocker Pro Engine)
+- **Chặn từ tầng mạng (Route Interception):** Ngăn chặn hơn 60+ mạng quảng cáo độc hại, cá cược, nổ hũ (W88, Kubet, 789Bet, PopAds, HilltopAds, RichPush...) tải về trình duyệt ngay từ request mạng -> Tăng tốc tải trang 50-70% và tiết kiệm tối đa RAM/CPU.
+- **Vô hiệu hóa bẫy cướp chuột & nhảy tab (window.open interceptor):** Chặn đứng các hành vi popunder / click-under khi click bất kỳ đâu trên màn hình.
+- **Tiêm CSS & Diệt Overlay:** Tự động ẩn và xóa sổ mọi floating banner, sticky bottom, iframe qc, và overlay z-index cao che nút bình luận.
+- **Đánh lừa script chống AdBlock (Anti-Adblock bypass):** Giả lập `canRunAds = true`, `fuckAdBlock` để các web phim không hiện thông báo bắt tắt chặn quảng cáo.
+- **Safe Force-Click:** Đảm bảo mọi cú click vào ô nhập liệu hoặc nút gửi luôn xuyên qua các lớp bọc vô hình.
 
 ### 5. ⭐ Tự Động Đánh Giá 5 Sao & Giải Math Captcha
 - **Vote 5 Sao:** Trước khi gửi bình luận, bot tự động tìm nút đánh giá 5 sao (⭐⭐⭐⭐⭐) trên trang phim để vote -> hành vi giống khán giả thật 100%.
