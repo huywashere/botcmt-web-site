@@ -82,6 +82,56 @@ class CommentPoster:
             pass
         return False
 
+    def reply_to_comment(self, page: Page, reply_text: str, author_name: str, email: str = "") -> dict:
+        """
+        Tìm bình luận có sẵn của người khác, bấm nút 'Trả lời' (Reply) và gửi bình luận.
+        Nếu không có nút Trả lời, trả về success=False để chuyển sang bình luận mới thông thường.
+        """
+        result = {"success": False, "message": "", "replied_to": ""}
+        try:
+            reply_selectors = [
+                "a:has-text('Trả lời')",
+                "button:has-text('Trả lời')",
+                ".comment-reply-link",
+                ".btn-reply",
+                "a.reply",
+                "button.reply",
+                "a:has-text('Reply')"
+            ]
+            reply_btn = None
+            for sel in reply_selectors:
+                btns = page.locator(sel).all()
+                for b in btns[:6]:
+                    if b.is_visible():
+                        reply_btn = b
+                        break
+                if reply_btn:
+                    break
+
+            if not reply_btn:
+                result["message"] = "Không tìm thấy nút Trả lời bình luận cũ"
+                return result
+
+            # Lấy thông tin trích dẫn người được trả lời
+            try:
+                parent_el = reply_btn.locator("xpath=ancestor::*[contains(@class, 'comment') or contains(@id, 'comment')][1]")
+                result["replied_to"] = parent_el.inner_text()[:40].replace("\n", " ").strip()
+            except Exception:
+                pass
+
+            reply_btn.scroll_into_view_if_needed()
+            time.sleep(0.6)
+            reply_btn.click()
+            time.sleep(1.0)
+
+            # Điền vào form bình luận xuất hiện
+            cmt_res = self.post_comment(page, reply_text, author_name, email)
+            cmt_res["replied_to"] = result["replied_to"]
+            return cmt_res
+        except Exception as e:
+            result["message"] = f"Lỗi khi bấm nút Trả lời: {e}"
+            return result
+
     def post_comment(self, page: Page, comment_text: str, author_name: str, email: str = "") -> dict:
         """
         Tìm khung bình luận trên trang, điền tên và email/gmail, nhập nội dung, sau đó gửi.

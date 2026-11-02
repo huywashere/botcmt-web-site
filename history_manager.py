@@ -65,3 +65,4 @@ class CommentHistoryManager:
     def count(self) -> int:
         """Tổng số lượng phim duy nhất đã được bình luận."""
         return len(self.history)
+

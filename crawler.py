@@ -195,6 +195,59 @@ class GoogleTopBot:
         except Exception:
             pass
 
+    def _simulate_video_playback(self, page: Page):
+        """
+        Giả lập bấm xem video phim (Play video 5-8s) như khán giả thật.
+        Tránh thuật toán chống bot của web phim kiểm tra xem người dùng có thực sự xem phim không.
+        """
+        interaction_cfg = self.config.get("interaction", {})
+        if not interaction_cfg.get("simulate_video_playback", True):
+            return
+
+        try:
+            # 1. Thử click nút Xem Phim nếu đang ở trang giới thiệu
+            watch_selectors = [
+                "a:has-text('Xem Phim')",
+                "a:has-text('Xem ngay')",
+                ".btn-watch",
+                ".btn-play",
+                ".play-icon",
+                "#play-film",
+                "a[href*='xem-phim']",
+                ".btn-see"
+            ]
+            for sel in watch_selectors:
+                btn = page.locator(sel).first
+                if btn.count() > 0 and btn.is_visible():
+                    btn.click(timeout=3000)
+                    self.log("      ▶️ Đã bấm nút 'Xem Phim'...", "dim")
+                    time.sleep(1.8)
+                    break
+        except Exception:
+            pass
+
+        try:
+            # 2. Thử kích hoạt thẻ <video> chạy 5-8s
+            played = page.evaluate("""() => {
+                const video = document.querySelector('video');
+                if (video) {
+                    try {
+                        video.muted = true;
+                        video.play();
+                        return true;
+                    } catch(e) { return false; }
+                }
+                return false;
+            }""")
+            watch_seconds = random.randint(5, 8)
+            if played:
+                self.log(f"      🍿 Đang xem phim thật trong {watch_seconds}s...", "bold green")
+            else:
+                self.log(f"      🍿 Đang ở trình phát phim {watch_seconds}s...", "dim")
+            time.sleep(watch_seconds)
+        except Exception:
+            time.sleep(2.5)
+
     def run(self, keywords=None):
         if not keywords:
             keywords = self.config.get("search", {}).get("keywords", [])
@@ -573,6 +626,11 @@ class GoogleTopBot:
 
         # Mô phỏng cuộn chuột đọc nội dung
         start_time = time.time()
+
+        # Giả lập bấm xem phim 5-8s trước nếu bật
+        if self.config.get("interaction", {}).get("simulate_video_playback", True):
+            self._simulate_video_playback(page)
+
         stay_duration = random.uniform(min_stay, max_stay)
         if should_scroll:
             self._simulate_reading(page, stay_duration)
@@ -608,22 +666,51 @@ class GoogleTopBot:
             author_email = custom_email if custom_email else self.comment_gen.generate_email(author_name)
             custom_templates = comment_cfg.get("custom_templates", [])
 
-            smart_comment, cmt_source = self.comment_gen.generate_comment(
-                movie_name=movie_name,
-                description=movie_desc,
-                custom_templates=custom_templates
-            )
+            # Kiểm tra xem có nên Trả lời (Reply) bình luận cũ của người khác không
+            existing_cmts = movie_info.get("comments", [])
+            reply_attempted = False
+            is_reply = False
 
-            self.log(f"      💬 [Gửi bình luận] Nguồn: [{cmt_source}]", "cyan")
-            self.log(f"         • Người gửi: [bold]{author_name}[/bold] ({author_email})", "white")
-            self.log(f"         • Nội dung: [italic yellow]\"{smart_comment}\"[/italic yellow]", "white")
+            if existing_cmts and self.config.get("interaction", {}).get("enable_reply_mode", True) and random.random() < 0.5:
+                target_cmt = random.choice(existing_cmts[:4])
+                smart_comment, cmt_source = self.comment_gen.generate_reply(
+                    movie_name=movie_name,
+                    target_author="",
+                    target_comment=target_cmt
+                )
+                self.log(f"      💬 [Chế độ trả lời bình luận] Nguồn: [{cmt_source}]", "cyan")
+                self.log(f"         • Bình luận gốc: [dim]\"{target_cmt[:45]}...\"[/dim]", "dim")
+                self.log(f"         • Người gửi: [bold]{author_name}[/bold] ({author_email})", "white")
+                self.log(f"         • Trả lời: [italic yellow]\"{smart_comment}\"[/italic yellow]", "white")
 
-            cmt_result = self.comment_poster.post_comment(
-                page=page,
-                comment_text=smart_comment,
-                author_name=author_name,
-                email=author_email
-            )
+                cmt_result = self.comment_poster.reply_to_comment(
+                    page=page,
+                    reply_text=smart_comment,
+                    author_name=author_name,
+                    email=author_email
+                )
+                if cmt_result.get("success"):
+                    reply_attempted = True
+                    is_reply = True
+
+            # Nếu không trả lời bình luận cũ hoặc trả lời không thành công thì đăng bình luận mới
+            if not reply_attempted or not cmt_result.get("success"):
+                smart_comment, cmt_source = self.comment_gen.generate_comment(
+                    movie_name=movie_name,
+                    description=movie_desc,
+                    custom_templates=custom_templates
+                )
+
+                self.log(f"      💬 [Gửi bình luận mới] Nguồn: [{cmt_source}]", "cyan")
+                self.log(f"         • Người gửi: [bold]{author_name}[/bold] ({author_email})", "white")
+                self.log(f"         • Nội dung: [italic yellow]\"{smart_comment}\"[/italic yellow]", "white")
+
+                cmt_result = self.comment_poster.post_comment(
+                    page=page,
+                    comment_text=smart_comment,
+                    author_name=author_name,
+                    email=author_email
+                )
 
             if cmt_result.get("success"):
                 self.log(f"         ✅ {cmt_result.get('message')}", "bold green")
@@ -671,13 +758,14 @@ class GoogleTopBot:
         if self.notifier.enabled:
             movie_name = movie_info.get("movie_name", current_title)
             status_icon = "✅ Đã gửi bình luận" if cmt_result.get("success") else "ℹ️ Đã xem trang"
+            cmt_type_label = "💬 *Trả lời bình luận:*" if is_reply else "💬 *Bình luận:*"
             tg_caption = (
                 f"🎬 *BOT CÀO PHIM & BÌNH LUẬN*\n\n"
                 f"🍿 *Phim:* {movie_name}\n"
                 f"🌐 *Trang web:* [{domain_brand.upper()}]\n"
                 f"🔗 *Link phim:* {current_url}\n"
                 f"👤 *Người gửi:* {author_name or 'Ẩn danh'} ({author_email})\n"
-                f"💬 *Bình luận:* \"{smart_comment}\"\n"
+                f"{cmt_type_label} \"{smart_comment}\"\n"
                 f"📊 *Trạng thái:* {status_icon}\n"
                 f"⏱️ *Thời gian xem:* {elapsed}s"
             )

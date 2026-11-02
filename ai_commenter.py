@@ -45,3 +45,25 @@ class AICommenter:
 
         return ""
 
+    def generate_ai_reply(self, movie_name: str, target_author: str, target_comment: str) -> str:
+        """Sử dụng Gemini AI để viết câu trả lời lại bình luận của người khác."""
+        if not self.enabled or not self.client:
+            return ""
+
+        prompt = (
+            f"Bạn là một khán giả xem phim người Việt Nam.\n"
+            f"Một người khác tên '{target_author or 'bạn'}' vừa bình luận về phim '{movie_name}': \"{target_comment[:200]}\".\n\n"
+            "Hãy viết duy nhất 1 câu ngắn gọn (10-25 từ) bằng tiếng Việt để TRẢ LỜI lại bình luận trên một cách tự nhiên, thân thiện, đồng tình.\n"
+            "Không thêm giải thích, không dùng ngoặc kép, chỉ trả về đúng nội dung câu trả lời."
+        )
+        try:
+            response = self.client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt
+            )
+            if response and response.text:
+                return response.text.strip().replace('"', '').replace("'", "")
+        except Exception:
+            pass
+        return ""
+

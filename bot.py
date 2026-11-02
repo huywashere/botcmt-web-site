@@ -62,7 +62,9 @@ def load_config(config_path="config.json") -> dict:
         },
         "interaction": {
             "auto_vote_5_stars": True,
-            "auto_solve_math_captcha": True
+            "auto_solve_math_captcha": True,
+            "simulate_video_playback": True,
+            "enable_reply_mode": True
         },
         "deduplication": {
             "enabled": True,
@@ -87,7 +89,8 @@ def load_config(config_path="config.json") -> dict:
             "enabled": False,
             "bot_token": "",
             "chat_id": "",
-            "send_screenshot": True
+            "send_screenshot": True,
+            "enable_remote_control": True
         },
         "scheduler": {
             "loop_mode": False,
@@ -218,6 +221,9 @@ def main():
     parser.add_argument("--no-ai", action="store_true", help="Tắt tính năng bình luận AI (chỉ dùng templates)")
     parser.add_argument("--tg-token", type=str, help="Bot Token Telegram để nhận thông báo")
     parser.add_argument("--tg-chat", type=str, help="Chat ID Telegram để nhận thông báo")
+    parser.add_argument("--remote", "--tg-remote", action="store_true", help="Chạy chế độ máy chủ điều khiển từ xa qua Telegram (/crawl, /status, /add...)")
+    parser.add_argument("--no-fake-watch", action="store_true", help="Tắt tính năng giả lập bấm xem video phim")
+    parser.add_argument("--no-reply", action="store_true", help="Tắt chế độ trả lời bình luận của người khác (chỉ gửi cmt mới)")
 
     args = parser.parse_args()
 
@@ -286,6 +292,12 @@ def main():
     if args.no_vote:
         config.setdefault("interaction", {})["auto_vote_5_stars"] = False
 
+    if args.no_fake_watch:
+        config.setdefault("interaction", {})["simulate_video_playback"] = False
+
+    if args.no_reply:
+        config.setdefault("interaction", {})["enable_reply_mode"] = False
+
     # Lấy danh sách từ khóa
     target_keywords = []
     if args.keyword:
@@ -337,6 +349,13 @@ def main():
     star_status = "BẬT (Tự động vote 5⭐ & giải Captcha)" if config.get("interaction", {}).get("auto_vote_5_stars", True) else "TẮT"
     table.add_row("Đánh giá 5 sao & Captcha", star_status)
 
+    # Giả lập xem phim & Trả lời bình luận
+    fake_watch_st = "BẬT (Xem 5-8s trước khi cmt)" if config.get("interaction", {}).get("simulate_video_playback", True) else "TẮT"
+    table.add_row("Giả lập xem video phim", fake_watch_st)
+
+    reply_st = "BẬT (Tự động thảo luận & Reply)" if config.get("interaction", {}).get("enable_reply_mode", True) else "TẮT"
+    table.add_row("Chế độ Reply bình luận", reply_st)
+
     # Bộ nhớ chống trùng lặp
     from history_manager import CommentHistoryManager
     dedup_mgr = CommentHistoryManager(config.get("deduplication", {}).get("history_file", "output/commented_history.json"))
@@ -344,8 +363,12 @@ def main():
     table.add_row("Bộ nhớ chống trùng phim", recomment_status)
 
     # Telegram
-    tg_status = "Đang BẬT (Gửi tin nhắn & ảnh về Telegram)" if config["telegram"].get("enabled") and config["telegram"].get("bot_token") else "Tắt"
+    tg_enabled = config["telegram"].get("enabled") and config["telegram"].get("bot_token")
+    tg_status = "Đang BẬT (Gửi tin nhắn & ảnh về Telegram)" if tg_enabled else "Tắt"
     table.add_row("Thông báo Telegram", tg_status)
+
+    remote_st = "BẬT (Sẵn sàng nhận lệnh /crawl, /status...)" if tg_enabled else "Tắt (Cần điền token Telegram)"
+    table.add_row("Điều khiển từ xa Telegram", remote_st)
 
     # Chế độ chạy lặp
     sched_status = f"BẬT (Lặp lại sau mỗi {config['scheduler'].get('interval_minutes')} phút)" if config["scheduler"].get("loop_mode") else "Chạy 1 lần duy nhất"
@@ -356,6 +379,47 @@ def main():
 
     console.print(table)
     console.print()
+
+    # Kích hoạt bộ điều khiển từ xa Telegram nếu có cấu hình
+    controller = None
+    if config["telegram"].get("enabled") and config["telegram"].get("bot_token"):
+        from telegram_controller import TelegramController
+        controller = TelegramController(
+            bot_token=config["telegram"]["bot_token"],
+            chat_id=config["telegram"]["chat_id"],
+            run_callback=lambda: run_once(config, target_keywords),
+            config=config,
+            console=console
+        )
+        controller.start_polling()
+
+    # Nếu người dùng chạy ở chế độ chuyên biệt máy chủ điều khiển Telegram (--remote)
+    if args.remote:
+        if not config["telegram"].get("enabled") or not config["telegram"].get("bot_token"):
+            console.print("[bold red]❌ Lỗi: Bạn cần cung cấp --tg-token và --tg-chat hoặc cấu hình trong config.json để dùng chế độ --remote![/bold red]")
+            return
+
+        console.print(Panel(
+            "[bold cyan]🤖 BOT ĐANG CHẠY Ở CHẾ ĐỘ MÁY CHỦ ĐIỀU KHIỂN TỪ XA TELEGRAM[/bold cyan]\n\n"
+            "• Bot đang giữ kết nối và chờ lệnh từ điện thoại của bạn.\n"
+            "• Mở Telegram trên điện thoại và gửi các lệnh sau:\n"
+            "  ▶️ [bold green]/crawl[/bold green] : Kích hoạt cào và bình luận ngay lập tức\n"
+            "  📊 [bold green]/status[/bold green] : Xem thống kê số phim đã cmt & trạng thái bot\n"
+            "  ➕ [bold green]/add <tên phim>[/bold green] : Thêm từ khóa phim mới vào danh sách\n"
+            "  📝 [bold green]/keywords[/bold green] : Xem danh sách từ khóa hiện có\n"
+            "  📜 [bold green]/history[/bold green] : Xem 5 phim vừa cmt gần nhất\n"
+            "  🛑 [bold green]/stop[/bold green] : Dừng phiên chạy\n\n"
+            "[bold yellow]👉 Nhấn Ctrl+C tại đây nếu bạn muốn tắt máy chủ điều khiển.[/bold yellow]",
+            border_style="cyan"
+        ))
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            if controller:
+                controller.stop_polling()
+            console.print("\n[yellow]⚠️ Đã tắt máy chủ điều khiển Telegram.[/yellow]")
+            return
 
     # Vòng lặp hẹn giờ nếu bật loop_mode
     if config["scheduler"].get("loop_mode"):

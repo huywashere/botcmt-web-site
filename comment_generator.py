@@ -22,6 +22,15 @@ SMART_COMMENT_TEMPLATES = [
     "Cốt truyện {movie_name} lớp lang bất ngờ phết, xem xong vẫn ngồi suy ngẫm mãi, đáng xem nha cả nhà."
 ]
 
+SMART_REPLY_TEMPLATES = [
+    "Chuẩn luôn bạn ơi, mình cũng thấy đoạn đấy xúc động dã man!",
+    "Đồng quan điểm với bạn, {movie_name} này xem cuốn thật sự luôn.",
+    "Vừa cày xong nghe bạn nói mới để ý, công nhận kịch bản lớp lang ghê.",
+    "Cảm ơn review của bạn nhé, nhờ bạn khen mà mình xem thử thấy hay bất ngờ!",
+    "Thực sự luôn bạn, đoạn cao trào làm mình rùng mình luôn ấy.",
+    "Đúng ý mình luôn, bản vietsub dịch cũng mượt và nét nữa chứ!"
+]
+
 class CommentGenerator:
     """Tạo bình luận thông minh (kết hợp AI Gemini và templates thông minh)."""
 
@@ -87,6 +96,28 @@ class CommentGenerator:
         template = random.choice(templates)
         comment = template.format(movie_name=clean_name)
         return comment, "Template"
+
+    def generate_reply(self, movie_name: str, target_author: str = "", target_comment: str = "") -> tuple:
+        """
+        Tạo câu trả lời (Reply) bình luận của người khác.
+        Ưu tiên dùng AI Gemini phân tích bình luận gốc để trả lời tự nhiên.
+        """
+        clean_name = self.clean_movie_title(movie_name)
+
+        # 1. Thử dùng AI Gemini
+        if self.ai_commenter.enabled and target_comment:
+            ai_reply = self.ai_commenter.generate_ai_reply(clean_name, target_author, target_comment)
+            if ai_reply and len(ai_reply) > 5:
+                return ai_reply, "AI Gemini Reply"
+
+        # 2. Dùng Template Reply
+        tpl = random.choice(SMART_REPLY_TEMPLATES)
+        reply_text = tpl.format(movie_name=clean_name)
+        if target_author and len(target_author.strip()) > 1 and not target_author.startswith("@"):
+            if random.random() < 0.5:
+                reply_text = f"@{target_author} {reply_text}"
+
+        return reply_text, "Template Reply"
 
     @staticmethod
     def generate_nickname() -> str:
