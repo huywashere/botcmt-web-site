@@ -10,6 +10,7 @@ from movie_extractor import MovieExtractor
 from comment_generator import CommentGenerator
 from comment_poster import CommentPoster
 from telegram_notifier import TelegramNotifier
+from history_manager import CommentHistoryManager
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -40,7 +41,13 @@ class GoogleTopBot:
             use_ai=cmt_cfg.get("use_ai", True)
         )
 
-        # Tập hợp các domain đã bình luận (Đảm bảo: chỉ cmt 1 lần / 1 website)
+        # Khởi tạo bộ nhớ chống bình luận trùng phim (Deduplication)
+        dedup_cfg = self.config.get("deduplication", {})
+        dedup_file = dedup_cfg.get("history_file", "output/commented_history.json")
+        self.history_mgr = CommentHistoryManager(history_file=dedup_file)
+        self.force_recomment = dedup_cfg.get("force_recomment", False)
+
+        # Tập hợp các domain đã bình luận
         self.commented_domains = set()
 
     def log(self, message: str, style: str = ""):
@@ -119,6 +126,75 @@ class GoogleTopBot:
 
         return browser, context
 
+    def _setup_ad_and_popup_protection(self, context: BrowserContext):
+        """
+        Bảo vệ tự động chống quảng cáo popup nhảy tab và chặn các domain quảng cáo rác.
+        Tự động đóng mọi popup ngoài ý muốn để bot không bị chuyển hướng kẹt trang.
+        """
+        ad_cfg = self.config.get("ad_blocker", {})
+        if not ad_cfg.get("enabled", True):
+            return
+
+        self.log("🛡️ Đã kích hoạt bộ lọc quảng cáo & chặn popup nhảy tab tự động", "dim")
+
+        # 1. Chặn request tới các mạng quảng cáo rác
+        ad_patterns = [
+            "*doubleclick.net*",
+            "*google-analytics.com*",
+            "*popads*",
+            "*exoclick*",
+            "*adnxs*",
+            "*adcash*",
+            "*histats*",
+            "*propellerads*",
+            "*mgid*",
+            "*taboola*"
+        ]
+        for pat in ad_patterns:
+            try:
+                context.route(f"**/{pat}/**", lambda route: route.abort())
+            except Exception:
+                pass
+
+        # 2. Tự động đóng các tab popup nhảy trang bất ngờ (Popunder / Popup)
+        if ad_cfg.get("block_popups", True):
+            def handle_new_page(new_page: Page):
+                try:
+                    time.sleep(0.5)
+                    new_url = new_page.url or ""
+                    allowed = self.config.get("movie_filter", {}).get("allowed_domains", ["motchill", "motphim", "phimmoi", "rophim"])
+                    is_allowed = any(dom in new_url.lower() for dom in allowed) or "google." in new_url.lower()
+                    if not is_allowed or "about:blank" in new_url:
+                        self.log(f"      🚫 Đã tự động đóng Popup quảng cáo: {new_url[:55]}...", "dim")
+                        new_page.close()
+                except Exception:
+                    try:
+                        new_page.close()
+                    except Exception:
+                        pass
+
+            context.on("page", handle_new_page)
+
+    def _dismiss_ad_overlays(self, page: Page):
+        """Xóa bỏ các banner quảng cáo nổi che khuất nội dung hoặc nút bình luận."""
+        try:
+            page.evaluate("""() => {
+                const selectors = [
+                    '.floating-banner', '.ads-overlay', '#popup-ad', '.popup-wrapper',
+                    'div[id*="ad-"]', 'div[class*="popup-banner"]', '.ad-box',
+                    'iframe[src*="ad"]', '.banner-top', '.banner-bottom', '.ad-sticky',
+                    '#banner-bottom', '.adsbox', '.qc-container'
+                ];
+                selectors.forEach(sel => {
+                    document.querySelectorAll(sel).forEach(el => {
+                        el.style.display = 'none';
+                        el.remove();
+                    });
+                });
+            }""")
+        except Exception:
+            pass
+
     def run(self, keywords=None):
         if not keywords:
             keywords = self.config.get("search", {}).get("keywords", [])
@@ -129,6 +205,7 @@ class GoogleTopBot:
 
         with sync_playwright() as p:
             browser, context = self._init_browser(p)
+            self._setup_ad_and_popup_protection(context)
             search_page = context.pages[0] if context.pages else context.new_page()
 
             try:
@@ -399,7 +476,18 @@ class GoogleTopBot:
             # Tìm danh sách phim Hot trên web này để bình luận nhiều lần
             hot_movies = []
             if prioritize_hot and auto_comment:
-                hot_movies = self._extract_hot_movie_links(new_page, limit=comments_per_web)
+                candidates = self._extract_hot_movie_links(new_page, limit=comments_per_web * 3)
+                if not self.force_recomment:
+                    fresh_movies = []
+                    for m in candidates:
+                        m_url = m.get("url", "")
+                        if self.history_mgr.is_commented(m_url):
+                            self.log(f"   ⏩ Đã bỏ qua phim đã từng bình luận trước đó: [dim]{m.get('title')}[/dim]", "dim")
+                        else:
+                            fresh_movies.append(m)
+                    hot_movies = fresh_movies[:comments_per_web]
+                else:
+                    hot_movies = candidates[:comments_per_web]
 
             if hot_movies and len(hot_movies) > 0:
                 self.log(f"   🔥 Tìm thấy {len(hot_movies)} phim Hot/nổi bật trên [{domain_brand.upper()}]. Bắt đầu cào & bình luận từng phim:", "bold yellow")
@@ -499,7 +587,19 @@ class GoogleTopBot:
         smart_comment = ""
         author_name = ""
 
+        # Kiểm tra trùng lặp với phim lẻ/trang chi tiết trực tiếp
+        if auto_comment and not self.force_recomment and self.history_mgr.is_commented(current_url):
+            self.log(f"      ⏩ Phim này đã có trong lịch sử đã bình luận ({current_url}). Bỏ qua bình luận!", "yellow")
+            auto_comment = False
+
         if auto_comment:
+            # 1. Tự động đóng banner quảng cáo nổi che nút
+            self._dismiss_ad_overlays(page)
+
+            # 2. Tự động đánh giá 5 sao nếu bật
+            if self.config.get("interaction", {}).get("auto_vote_5_stars", True):
+                self.comment_poster.vote_5_stars(page)
+
             movie_name = movie_info.get("movie_name", current_title)
             movie_desc = movie_info.get("description", "")
             custom_name = comment_cfg.get("custom_name")
@@ -527,6 +627,14 @@ class GoogleTopBot:
 
             if cmt_result.get("success"):
                 self.log(f"         ✅ {cmt_result.get('message')}", "bold green")
+                # Ghi nhận vào bộ nhớ lịch sử đã bình luận
+                self.history_mgr.record_comment(
+                    url=current_url,
+                    movie_name=movie_name,
+                    author=author_name,
+                    email=author_email,
+                    comment_text=smart_comment
+                )
             else:
                 self.log(f"         ℹ️ {cmt_result.get('message')}", "dim")
 

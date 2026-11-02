@@ -51,6 +51,19 @@
       "Bản vietsub của {movie_name} nét căng, cảm ơn web đã cập nhật nhanh nhé!"
     ]
   },
+  "ad_blocker": {
+    "enabled": true,
+    "block_popups": true
+  },
+  "interaction": {
+    "auto_vote_5_stars": true,
+    "auto_solve_math_captcha": true
+  },
+  "deduplication": {
+    "enabled": true,
+    "history_file": "output/commented_history.json",
+    "force_recomment": false
+  },
   "browser": {
     "use_persistent_profile": true,
     "profile_dir": "user_profile",

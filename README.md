@@ -26,15 +26,27 @@ Bot tự động hóa tìm kiếm, cào dữ liệu và **bình luận thông mi
   - Gửi ảnh về Telegram kèm **Link phim trực tiếp (`🔗 Link phim`)**, tên phim, nội dung comment và tên người gửi.
   - Bạn chỉ cần bấm vào link trên Telegram để mở ngay trang phim và kiểm tra bình luận của mình!
 
-### 4. 🧠 Bình Luận Thông Minh Bằng AI & Bình Luận Hàng Loạt Phim HOT
+### 4. 🛡️ Chặn Quảng Cáo Pop-up & Diệt Banner Rác (Ad & Popup Killer)
+- Tự động chặn các mạng quảng cáo rác (`popads`, `exoclick`, `doubleclick`, cá cược...) và tự động đóng ngay lập tức các tab quảng cáo nhảy trang ngoài ý muốn.
+- Tự động gỡ bỏ các banner nổi đè lên nút gửi bình luận, giúp bot không bao giờ bị kẹt khi tương tác trên web phim lậu.
+
+### 5. ⭐ Tự Động Đánh Giá 5 Sao & Giải Math Captcha
+- **Vote 5 Sao:** Trước khi gửi bình luận, bot tự động tìm nút đánh giá 5 sao (⭐⭐⭐⭐⭐) trên trang phim để vote -> hành vi giống khán giả thật 100%.
+- **Giải Math Captcha:** Tự động phát hiện các câu hỏi bảo vệ dạng toán học (ví dụ: `5 + 3 = ?`), tính toán kết quả và điền tự động vào ô xác nhận.
+
+### 6. 🔄 Bộ Nhớ Chống Bình Luận Trùng Phim (Deduplication Memory)
+- Tự động ghi nhớ toàn bộ link các phim đã bình luận vào file `output/commented_history.json`.
+- Khi bot chạy lặp lại định kỳ, bot sẽ **tự động bỏ qua các phim đã bình luận** và tìm phim mới tiếp theo, tránh tuyệt đối việc bình luận 2 lần trên cùng 1 bộ phim.
+
+### 7. 🧠 Bình Luận Thông Minh Bằng AI & Bình Luận Hàng Loạt Phim HOT
 - **Bình luận nhiều phim HOT trên mỗi website:** Khi mở một trang web phim (*Motchill, Motphim, Phimmoi, Rophim*), bot tự động quét và cào lần lượt **Top 3 (hoặc 5) phim HOT nhất** trên trang chủ của web đó, vào chi tiết từng phim và để lại bình luận.
 - **Tự động đổi danh tính (Anti-Spam):** Mỗi phim được bình luận bằng một Nickname khác nhau và một nội dung nhận xét độc nhất (hoặc sinh bởi Gemini AI theo đúng tóm tắt phim).
 - **Tự động chuyển đổi thông minh:** Nếu không điền API key, bot tự động dùng kho mẫu câu cảm nghĩ tiếng Việt tự nhiên đã được làm sạch tên phim.
 
-### 5. 🌐 Hỗ Trợ Proxy Xoay IP (Rotating Proxy)
+### 8. 🌐 Hỗ Trợ Proxy Xoay IP (Rotating Proxy)
 - Hỗ trợ cấu hình Proxy HTTP/SOCKS5 trong `config.json` hoặc tham số dòng lệnh `--proxy`. Giúp bạn cào dữ liệu liên tục mà không lo bị chặn IP mạng nhà.
 
-### 6. ⏰ Chế Độ Hẹn Giờ Chạy Lặp Tự Động (Scheduler / Loop Mode)
+### 9. ⏰ Chế Độ Hẹn Giờ Chạy Lặp Tự Động (Scheduler / Loop Mode)
 - Tự động chạy định kỳ (ví dụ mỗi 60 phút thức dậy 1 lần) để quét các phim mới phát hành trên Motchill/Phimmoi/Rophim, tương tác để lại bình luận rồi tự động nghỉ ngơi.
 
 ---
@@ -45,9 +57,10 @@ Bot tự động hóa tìm kiếm, cào dữ liệu và **bình luận thông mi
 auto-crawl-bot-cmt-web/
 ├── bot.py                # File khởi chạy chính (CLI & Bảng điều khiển Rich)
 ├── crawler.py            # Động cơ cào dữ liệu & điều khiển trình duyệt Playwright
+├── history_manager.py    # Bộ nhớ quản lý phim đã cmt (chống trùng lặp)
 ├── movie_extractor.py    # Bộ lọc độc quyền 4 web phim & bóc tách dữ liệu
 ├── comment_generator.py  # Bộ tạo bình luận thông minh (kết hợp AI & Templates)
-├── comment_poster.py     # Giả lập gõ phím người thật & gửi bình luận vào form
+├── comment_poster.py     # Giả lập gõ phím người thật, Vote 5 sao & giải Captcha
 ├── ai_commenter.py       # Module tích hợp Gemini AI phân tích tóm tắt phim
 ├── telegram_notifier.py  # Module gửi thông báo & ảnh chụp về Telegram
 ├── data_exporter.py      # Xuất dữ liệu ra CSV & JSON
@@ -56,6 +69,7 @@ auto-crawl-bot-cmt-web/
 ├── run.bat               # File click đúp chuột chạy nhanh trên Windows
 ├── requirements.txt      # Thư viện yêu cầu
 └── output/               # Thư mục lưu trữ kết quả
+    ├── commented_history.json
     ├── comments_posted.csv
     ├── movies_crawled.csv
     ├── visit_history.csv

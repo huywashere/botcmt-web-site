@@ -1,12 +1,86 @@
 import random
+import re
 import time
 from playwright.sync_api import Page
 
 class CommentPoster:
-    """Tự động tìm kiếm khung bình luận, điền Tên, Gmail, Nội dung và gửi bình luận."""
+    """Tự động tìm kiếm khung bình luận, điền Tên, Gmail, Nội dung, giải Captcha và gửi bình luận."""
 
     def __init__(self, log_fn=None):
         self.log = log_fn if log_fn else print
+
+    def vote_5_stars(self, page: Page) -> bool:
+        """Tự động tìm nút vote 5 sao trên trang phim và bấm đánh giá."""
+        star_selectors = [
+            ".star-5",
+            "[data-rating='5']",
+            "[data-score='5']",
+            "[data-value='5']",
+            ".rating-stars span:nth-child(5)",
+            ".stars-rating i:nth-child(5)",
+            ".fa-star:nth-child(5)",
+            "#star-5",
+            ".star-vote:nth-child(5)",
+            ".btn-rate[data-val='5']",
+            "a[title*='5 sao' i]",
+            "span[title*='5 sao' i]",
+            "button[title*='5 sao' i]",
+            ".rate-star[data-val='5']"
+        ]
+        try:
+            for sel in star_selectors:
+                el = page.locator(sel).first
+                if el.count() > 0 and el.is_visible():
+                    el.scroll_into_view_if_needed()
+                    time.sleep(0.4)
+                    el.click(delay=random.randint(50, 100))
+                    self.log("      ⭐ Đã tự động đánh giá 5 sao cho phim!", "bold yellow")
+                    time.sleep(0.6)
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def solve_math_captcha(self, page: Page) -> bool:
+        """Tự động phát hiện và giải câu hỏi bảo vệ / Math Captcha (ví dụ: 3 + 5 = ?)."""
+        try:
+            captcha_inputs = [
+                "input[name*='captcha']",
+                "input[name*='math']",
+                "input[name*='question']",
+                "input[id*='captcha']",
+                "input[placeholder*='kết quả' i]",
+                "input[placeholder*='tính' i]",
+                "input[placeholder*='bảo vệ' i]",
+                "input[placeholder*='câu hỏi' i]"
+            ]
+            for sel in captcha_inputs:
+                inp = page.locator(sel).first
+                if inp.count() > 0 and inp.is_visible():
+                    context_text = ""
+                    try:
+                        parent = inp.locator("xpath=..")
+                        context_text = parent.inner_text()
+                    except Exception:
+                        pass
+
+                    if not context_text:
+                        context_text = inp.get_attribute("placeholder") or ""
+
+                    match = re.search(r"(\d{1,2})\s*([\+\-\*])\s*(\d{1,2})", context_text)
+                    if match:
+                        n1 = int(match.group(1))
+                        op = match.group(2)
+                        n2 = int(match.group(3))
+                        ans = n1 + n2 if op == "+" else (n1 - n2 if op == "-" else n1 * n2)
+                        inp.click()
+                        inp.fill(str(ans))
+                        self.log(f"      🧮 Đã tự động giải Math Captcha: {n1} {op} {n2} = {ans}", "cyan")
+                        time.sleep(0.5)
+                        return True
+        except Exception:
+            pass
+        return False
 
     def post_comment(self, page: Page, comment_text: str, author_name: str, email: str = "") -> dict:
         """
@@ -114,7 +188,10 @@ class CommentPoster:
                 comment_box.type(ch, delay=random.randint(25, 65))
             time.sleep(1.2)
 
-            # 5. Tìm nút Gửi (Submit button)
+            # 5. Tự động kiểm tra và giải Math Captcha nếu có trước khi bấm gửi
+            self.solve_math_captcha(page)
+
+            # 6. Tìm nút Gửi (Submit button)
             submit_selectors = [
                 "button[type='submit']",
                 "input[type='submit']",

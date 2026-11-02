@@ -53,7 +53,21 @@ def load_config(config_path="config.json") -> dict:
             "use_ai": True,
             "gemini_api_key": "",
             "custom_name": "",
+            "custom_email": "",
             "custom_templates": []
+        },
+        "ad_blocker": {
+            "enabled": True,
+            "block_popups": True
+        },
+        "interaction": {
+            "auto_vote_5_stars": True,
+            "auto_solve_math_captcha": True
+        },
+        "deduplication": {
+            "enabled": True,
+            "history_file": "output/commented_history.json",
+            "force_recomment": False
         },
         "browser": {
             "use_persistent_profile": True,
@@ -196,6 +210,9 @@ def main():
     parser.add_argument("--visible", action="store_true", help="Hiện cửa sổ trình duyệt theo dõi trực quan")
     parser.add_argument("--stay", type=int, help="Thời gian ở lại xem mỗi website (giây)")
     parser.add_argument("-i", "--interval", type=int, help="Chế độ lặp lại sau mỗi X phút (ví dụ: -i 60)")
+    parser.add_argument("--force-recomment", action="store_true", help="Bỏ qua lịch sử, cho phép cmt lại các phim đã từng cmt")
+    parser.add_argument("--no-adblock", action="store_true", help="Tắt tính năng chặn quảng cáo và popup nhảy tab")
+    parser.add_argument("--no-vote", action="store_true", help="Tắt tính năng tự động vote 5 sao cho phim")
     parser.add_argument("--proxy", type=str, help="Địa chỉ Proxy HTTP (ví dụ: http://127.0.0.1:8080)")
     parser.add_argument("--ai-key", type=str, help="API Key Google Gemini để bình luận AI")
     parser.add_argument("--no-ai", action="store_true", help="Tắt tính năng bình luận AI (chỉ dùng templates)")
@@ -260,6 +277,15 @@ def main():
         config["behavior"]["min_stay_seconds"] = max(2, args.stay - 2)
         config["behavior"]["max_stay_seconds"] = args.stay + 2
 
+    if args.force_recomment:
+        config.setdefault("deduplication", {})["force_recomment"] = True
+
+    if args.no_adblock:
+        config.setdefault("ad_blocker", {})["enabled"] = False
+
+    if args.no_vote:
+        config.setdefault("interaction", {})["auto_vote_5_stars"] = False
+
     # Lấy danh sách từ khóa
     target_keywords = []
     if args.keyword:
@@ -302,6 +328,20 @@ def main():
     # Proxy
     proxy_status = f"Đang BẬT ({config['proxy'].get('server')})" if config["proxy"].get("enabled") and config["proxy"].get("server") else "Không dùng Proxy (IP trực tiếp)"
     table.add_row("Trạng thái Proxy", proxy_status)
+
+    # Chặn quảng cáo & popup
+    ad_status = "BẬT (Diệt popup & banner rác)" if config.get("ad_blocker", {}).get("enabled", True) else "TẮT"
+    table.add_row("Chặn quảng cáo & Popup", ad_status)
+
+    # Đánh giá 5 sao & Math Captcha
+    star_status = "BẬT (Tự động vote 5⭐ & giải Captcha)" if config.get("interaction", {}).get("auto_vote_5_stars", True) else "TẮT"
+    table.add_row("Đánh giá 5 sao & Captcha", star_status)
+
+    # Bộ nhớ chống trùng lặp
+    from history_manager import CommentHistoryManager
+    dedup_mgr = CommentHistoryManager(config.get("deduplication", {}).get("history_file", "output/commented_history.json"))
+    recomment_status = "BỎ QUA LỊCH SỬ (--force-recomment)" if config.get("deduplication", {}).get("force_recomment") else f"BẬT (Đã nhớ {dedup_mgr.count()} phim đã cmt)"
+    table.add_row("Bộ nhớ chống trùng phim", recomment_status)
 
     # Telegram
     tg_status = "Đang BẬT (Gửi tin nhắn & ảnh về Telegram)" if config["telegram"].get("enabled") and config["telegram"].get("bot_token") else "Tắt"
