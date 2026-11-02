@@ -11,12 +11,13 @@ def main():
         os.system("cls" if os.name == "nt" else "clear")
         
         menu_text = (
-            "[bold yellow]1.[/bold yellow] [bold green]Chạy ĐA LUỒNG cào & cmt[/bold green] (Hiện Chrome quan sát trực quan 3 web cùng lúc)\n"
-            "[bold yellow]2.[/bold yellow] [bold cyan]Chạy NGẦM siêu nhẹ (Headless)[/bold cyan] (Chạy ngầm tốc độ cao, không mở cửa sổ)\n"
-            "[bold yellow]3.[/bold yellow] [bold magenta]Chế độ ĐIỀU KHIỂN TỪ XA qua TELEGRAM[/bold magenta] (Dùng điện thoại gửi /crawl, /status...)\n"
-            "[bold yellow]4.[/bold yellow] [bold blue]Mở Chrome đăng nhập tài khoản Google[/bold blue] (userwritezeus@gmail.com)\n"
-            "[bold yellow]5.[/bold yellow] [bold yellow]Chạy TEST NHANH 1 phim duy nhất[/bold yellow] (Test thử nghiệm trong 1 phút)\n"
-            "[bold yellow]6.[/bold yellow] [dim]Xem danh sách các phim đã bình luận[/dim]\n"
+            "[bold yellow]1.[/bold yellow] [bold green]Chạy ĐA LUỒNG cào & cmt[/bold green] (Hiện Chrome quan sát 3 web cùng lúc)\n"
+            "[bold yellow]2.[/bold yellow] [bold cyan]Chạy NGẦM siêu nhẹ (Headless)[/bold cyan] (Tốc độ cao, không mở cửa sổ Chrome)\n"
+            "[bold yellow]3.[/bold yellow] [bold red]Chế độ SPAM bình luận Flexphim[/bold red] (Spam nhiều phim/web, tự động đợi Cloudflare)\n"
+            "[bold yellow]4.[/bold yellow] [bold magenta]Chế độ ĐIỀU KHIỂN TỪ XA qua TELEGRAM[/bold magenta] (Dùng điện thoại gửi /crawl, /status...)\n"
+            "[bold yellow]5.[/bold yellow] [bold blue]Mở Chrome đăng nhập tài khoản Google[/bold blue] (userwritezeus@gmail.com)\n"
+            "[bold yellow]6.[/bold yellow] [bold yellow]Chạy TEST NHANH 1 phim duy nhất[/bold yellow] (Test thử nghiệm trong 1 phút)\n"
+            "[bold yellow]7.[/bold yellow] [dim]Xem danh sách các phim đã bình luận[/dim]\n"
             "[bold yellow]0.[/bold yellow] [red]Thoát[/red]"
         )
         
@@ -28,7 +29,7 @@ def main():
         ))
         
         try:
-            choice = input("\n👉 Nhập lựa chọn của bạn [1, 2, 3, 4, 5, 6, 0]: ").strip()
+            choice = input("\n👉 Nhập lựa chọn của bạn [1, 2, 3, 4, 5, 6, 7, 0]: ").strip()
         except (KeyboardInterrupt, EOFError):
             print("\nĐã thoát.")
             break
@@ -42,18 +43,22 @@ def main():
             subprocess.run([sys.executable, "bot.py", "--headless", "-w", "3"])
             input("\n👉 Nhấn ENTER để quay lại menu chính...")
         elif choice == "3":
+            console.print("\n[bold red]🔥 Đang khởi động chế độ SPAM bình luận Flexphim (Đa luồng + Tự đợi Cloudflare)...[/bold red]\n")
+            subprocess.run([sys.executable, "bot.py", "--spam", "--cmts-per-web", "3", "--cmts-per-movie", "2", "-w", "3", "--visible"])
+            input("\n👉 Nhấn ENTER để quay lại menu chính...")
+        elif choice == "4":
             console.print("\n[bold magenta]📱 Đang khởi động Máy chủ Telegram... Mở Telegram trên điện thoại để điều khiển bot![/bold magenta]\n")
             subprocess.run([sys.executable, "bot.py", "--remote"])
             input("\n👉 Nhấn ENTER để quay lại menu chính...")
-        elif choice == "4":
+        elif choice == "5":
             console.print("\n[bold blue]🔑 Đang mở Google Chrome đăng nhập tài khoản...[/bold blue]\n")
             subprocess.run([sys.executable, "bot.py", "--setup-login", "--email", "userwritezeus@gmail.com"])
             input("\n👉 Nhấn ENTER để quay lại menu chính...")
-        elif choice == "5":
+        elif choice == "6":
             console.print("\n[bold yellow]⚡ Đang chạy thử nghiệm 1 phim nhanh nhất...[/bold yellow]\n")
             subprocess.run([sys.executable, "bot.py", "-k", "phim mai", "-t", "1", "--cmts-per-web", "1", "--visible"])
             input("\n👉 Nhấn ENTER để quay lại menu chính...")
-        elif choice == "6":
+        elif choice == "7":
             from history_manager import CommentHistoryManager
             mgr = CommentHistoryManager()
             console.print(f"\n[bold green]📊 Tổng số phim đã bình luận: {mgr.count()} phim[/bold green]")
@@ -69,4 +74,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -151,7 +151,7 @@ class AdBlockerPro:
                     if not new_url or new_url == "about:blank":
                         return
 
-                    is_legit = any(d in new_url for d in allowed) or "google." in new_url
+                    is_legit = any(d in new_url for d in allowed) or "google." in new_url or "cloudflare" in new_url
                     is_ad = any(ad in new_url for ad in ["bet", "casino", "shopee", "lazada", "game", "nohu", "taixiu", "ads", "pop"])
                     if not is_legit or is_ad:
                         new_page.close()

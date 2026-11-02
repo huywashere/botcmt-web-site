@@ -261,6 +261,9 @@ def main():
     parser.add_argument("--no-reply", action="store_true", help="Tắt chế độ trả lời bình luận của người khác (chỉ gửi cmt mới)")
     parser.add_argument("--save-files", action="store_true", help="Lưu dữ liệu và ảnh ra ổ cứng máy tính (mặc định: tắt để chỉ gửi về Telegram)")
     parser.add_argument("--no-files", "--tele-only", action="store_true", help="Không lưu file rác trong máy, chỉ gửi trực tiếp về Telegram")
+    parser.add_argument("--spam", action="store_true", help="Bật chế độ SPAM bình luận Flexphim (nhiều bình luận trên mỗi phim & cào nhiều web song song)")
+    parser.add_argument("--cmts-per-movie", type=int, help="Số lượng bình luận muốn spam trên mỗi bộ phim (mặc định: 1)")
+    parser.add_argument("--wait-cf", "--wait-cloudflare", type=int, help="Thời gian tối đa (giây) đợi Cloudflare tự động bypass (mặc định: 25)")
 
     args = parser.parse_args()
 
@@ -355,6 +358,15 @@ def main():
         config["output"]["save_csv"] = False
         config["output"]["save_json"] = False
         config["output"]["clean_screenshots_after_send"] = True
+
+    if args.spam:
+        config.setdefault("comment", {})["spam_mode"] = True
+        config["comment"]["comments_per_movie"] = max(2, config["comment"].get("comments_per_movie", 2))
+    if args.cmts_per_movie:
+        config.setdefault("comment", {})["comments_per_movie"] = args.cmts_per_movie
+
+    if args.wait_cf:
+        config.setdefault("cloudflare", {})["timeout_seconds"] = args.wait_cf
 
     # Lấy danh sách từ khóa
     target_keywords = []

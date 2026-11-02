@@ -2,9 +2,10 @@ import random
 import re
 import time
 from playwright.sync_api import Page
+from cloudflare_handler import CloudflareHandler
 
 class CommentPoster:
-    """Tự động tìm kiếm khung bình luận, bấm nút mở form nếu ẩn, điền Tên, Gmail, Nội dung, giải Captcha và gửi bình luận."""
+    """Tự động phân tích sâu DOM, vượt bảo vệ Cloudflare/Turnstile, điền Tên, Gmail, giải Captcha và gửi bình luận (Spam CMT)."""
 
     def __init__(self, log_fn=None):
         self.log = log_fn if log_fn else print
@@ -93,7 +94,7 @@ class CommentPoster:
                         ans = n1 + n2 if op == "+" else (n1 - n2 if op == "-" else n1 * n2)
                         inp.click()
                         inp.fill(str(ans))
-                        self.log(f"      🧮 Đã tự động giải Math Captcha: {n1} {op} {n2} = {ans}", "cyan")
+                        self.log(f"         • Captcha bảo vệ: [ĐÃ GIẢI MATH CAPTCHA] {n1} {op} {n2} = {ans}", "bold cyan")
                         time.sleep(0.5)
                         return True
         except Exception:
@@ -107,6 +108,9 @@ class CommentPoster:
         """
         result = {"success": False, "message": "", "replied_to": ""}
         try:
+            # 1. Đợi Cloudflare nếu có
+            CloudflareHandler.wait_and_bypass(page, log_fn=self.log)
+
             # Cuộn xuống khu vực bình luận trước
             try:
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight * 0.75)")
@@ -155,7 +159,7 @@ class CommentPoster:
             reply_btn.scroll_into_view_if_needed()
             time.sleep(0.5)
             self._safe_click(reply_btn)
-            self.log(f"      ↳ Đã bấm nút 'Trả lời' bình luận cũ: '{result['replied_to'][:30]}...'", "cyan")
+            self.log(f"      ↳ [PHÂN TÍCH] Đã xác định & click nút '↳ Trả lời': '{result['replied_to'][:30]}...'", "cyan")
             time.sleep(1.2)
 
             # Điền vào form bình luận xuất hiện sau khi bấm Trả lời
@@ -168,8 +172,11 @@ class CommentPoster:
 
     def post_comment(self, page: Page, comment_text: str, author_name: str, email: str = "") -> dict:
         """
-        Tìm khung bình luận trên trang, tự động kích hoạt nút mở form nếu cần,
-        điền tên, email/gmail, nội dung và gửi.
+        Tìm khung bình luận trên trang:
+        1. Đợi Cloudflare bot protection nếu trang đang bị kiểm tra.
+        2. Tự động kích hoạt nút mở form nếu form ẩn (như Motchill, Rophim).
+        3. Phân tích chi tiết và xác định chính xác các ô Textarea, Name, Email, Captcha, Submit.
+        4. Gửi bình luận và xác thực kết quả.
         """
         result = {
             "success": False,
@@ -178,6 +185,9 @@ class CommentPoster:
         }
 
         try:
+            # 1. Đợi Cloudflare nếu có
+            CloudflareHandler.wait_and_bypass(page, log_fn=self.log)
+
             # Cuộn trang xuống khu vực bình luận
             try:
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight * 0.7)")
@@ -207,21 +217,23 @@ class CommentPoster:
 
             target_context = page
             comment_box = None
+            found_sel = ""
 
-            # 1. Tìm ô nhập bình luận trực tiếp trước
+            # 2. Tìm ô nhập bình luận trực tiếp trước
             for sel in textarea_selectors:
                 elements = page.locator(sel).all()
                 for el in elements:
                     try:
                         if el.is_visible():
                             comment_box = el
+                            found_sel = sel
                             break
                     except Exception:
                         pass
                 if comment_box:
                     break
 
-            # 2. Nếu chưa thấy ô nhập (nhiều web ẩn form sau nút 'Gửi bình luận' / 'Viết bình luận')
+            # 3. Nếu chưa thấy ô nhập (nhiều web ẩn form sau nút 'Gửi bình luận' / 'Viết bình luận')
             if not comment_box:
                 trigger_selectors = [
                     "button:has-text('Gửi bình luận')",
@@ -233,6 +245,8 @@ class CommentPoster:
                     "a:has-text('Viết bình luận')",
                     "span:has-text('Viết bình luận')",
                     "div[class*='bg-[#FF7E08]']:has-text('bình luận')",
+                    "button[class*='bg-[#FF7E08]']",
+                    "*[class*='bg-[#FF7E08]']",
                     ".btn-comment",
                     ".btn-write-comment",
                     "#btn-comment",
@@ -249,7 +263,8 @@ class CommentPoster:
                                 time.sleep(0.4)
                                 clicked = self._safe_click(trig)
                                 if clicked:
-                                    self.log(f"      🔔 Đã bấm nút kích hoạt form bình luận ({trig_sel})", "cyan")
+                                    tag_name = trig.evaluate("el => el.tagName")
+                                    self.log(f"      🔔 [PHÂN TÍCH DOM] Đã phát hiện nút mở form ẩn: <{tag_name}> '{trig_sel}' -> Click kích hoạt!", "cyan")
                                     time.sleep(1.2)
                                     break
                         except Exception:
@@ -262,6 +277,7 @@ class CommentPoster:
                             try:
                                 if el.is_visible():
                                     comment_box = el
+                                    found_sel = sel2
                                     break
                             except Exception:
                                 pass
@@ -270,7 +286,7 @@ class CommentPoster:
                     if comment_box:
                         break
 
-            # 3. Quét các Frame phụ (iframe bình luận Facebook, iframe ngoài) nếu trang chính không có
+            # 4. Quét các Frame phụ (iframe bình luận Facebook, iframe ngoài) nếu trang chính không có
             if not comment_box:
                 for frame in page.frames:
                     if frame == page.main_frame:
@@ -282,8 +298,9 @@ class CommentPoster:
                                 try:
                                     if el.is_visible():
                                         comment_box = el
+                                        found_sel = sel
                                         target_context = frame
-                                        self.log(f"      🖼️ Đã tìm thấy khung bình luận trong iframe!", "cyan")
+                                        self.log(f"      🖼️ [PHÂN TÍCH DOM] Đã tìm thấy khung bình luận trong iframe con!", "cyan")
                                         break
                                 except Exception:
                                     pass
@@ -295,8 +312,13 @@ class CommentPoster:
                         pass
 
             if not comment_box:
-                result["message"] = "Không tìm thấy khung bình luận trực tiếp (hoặc trang web yêu cầu đăng nhập tài khoản / chưa load xong form)."
+                result["message"] = "Không tìm thấy khung bình luận trực tiếp (hoặc trang web yêu cầu đăng nhập tài khoản / dính Cloudflare chặn)."
                 return result
+
+            # Báo cáo kết quả phân tích DOM
+            box_tag = comment_box.evaluate("el => el.tagName")
+            self.log(f"      🔍 [PHÂN TÍCH DOM BÌNH LUẬN]", "bold cyan")
+            self.log(f"         • Ô nhập nội dung: [XÁC ĐỊNH THÀNH CÔNG] <{box_tag}> (selector: {found_sel})", "green")
 
             # Cuộn mượt mà đến khung bình luận
             try:
@@ -305,7 +327,7 @@ class CommentPoster:
             except Exception:
                 pass
 
-            # 4. Tìm và điền ô Tên (Author / Nickname / Họ tên) nếu có
+            # 5. Tìm và điền ô Tên (Author / Nickname / Họ tên) nếu có
             name_selectors = [
                 "input[name*='name']",
                 "input[name*='author']",
@@ -336,10 +358,13 @@ class CommentPoster:
                 self._safe_click(name_input)
                 name_input.fill("")
                 for ch in author_name:
-                    name_input.type(ch, delay=random.randint(25, 60))
+                    name_input.type(ch, delay=random.randint(25, 55))
+                self.log(f"         • Ô Tên tác giả: [XÁC ĐỊNH THÀNH CÔNG] -> Đã điền: '{author_name}'", "green")
                 time.sleep(0.4)
+            else:
+                self.log(f"         • Ô Tên tác giả: [KHÔNG YÊU CẦU / ĐÃ ĐĂNG NHẬP SẴN TÀI KHOẢN]", "dim")
 
-            # 5. Tìm và điền ô Gmail / Email nếu có
+            # 6. Tìm và điền ô Gmail / Email nếu có
             if email:
                 email_selectors = [
                     "input[type='email']",
@@ -350,6 +375,7 @@ class CommentPoster:
                     "input[placeholder*='gmail' i]",
                     "input[placeholder*='thư điện tử' i]"
                 ]
+                email_found = False
                 for sel in email_selectors:
                     el = target_context.locator(sel).first
                     try:
@@ -357,13 +383,17 @@ class CommentPoster:
                             self._safe_click(el)
                             el.fill("")
                             for ch in email:
-                                el.type(ch, delay=random.randint(20, 50))
+                                el.type(ch, delay=random.randint(20, 45))
+                            self.log(f"         • Ô Gmail: [XÁC ĐỊNH THÀNH CÔNG] -> Đã điền: '{email}'", "green")
+                            email_found = True
                             time.sleep(0.4)
                             break
                     except Exception:
                         pass
+                if not email_found:
+                    self.log(f"         • Ô Gmail: [KHÔNG YÊU CẦU / ĐÃ LƯU PROFILE]", "dim")
 
-            # 6. Nhập nội dung bình luận vào ô Textarea
+            # 7. Nhập nội dung bình luận vào ô Textarea (Spam CMT Flexphim)
             self._safe_click(comment_box)
             try:
                 comment_box.fill("")
@@ -371,12 +401,15 @@ class CommentPoster:
             except Exception:
                 for ch in comment_text:
                     comment_box.type(ch, delay=random.randint(20, 45))
+            self.log(f"         • Nội dung Flexphim: [ĐÃ NHẬP XONG] \"{comment_text}\"", "bold yellow")
             time.sleep(1.0)
 
-            # 7. Tự động kiểm tra và giải Math Captcha nếu có trước khi bấm gửi
-            self.solve_math_captcha(target_context)
+            # 8. Tự động kiểm tra và giải Math Captcha nếu có trước khi bấm gửi
+            solved_captcha = self.solve_math_captcha(target_context)
+            if not solved_captcha:
+                self.log(f"         • Captcha bảo vệ: [KHÔNG CÓ / TRANG AN TOÀN]", "dim")
 
-            # 8. Tìm nút Gửi (Submit button)
+            # 9. Tìm nút Gửi (Submit button)
             submit_selectors = [
                 "form button[type='submit']",
                 "form input[type='submit']",
@@ -411,8 +444,11 @@ class CommentPoster:
                     break
 
             if submit_btn:
+                btn_name = submit_btn.evaluate("el => el.innerText || el.value || el.tagName")
+                self.log(f"         • Nút Gửi/Đăng: [XÁC ĐỊNH THÀNH CÔNG] <{btn_name.strip()}> -> Đang bấm gửi!", "bold green")
                 self._safe_click(submit_btn)
             else:
+                self.log(f"         • Nút Gửi/Đăng: [GỬI BẰNG PHÍM ENTER / CTRL+ENTER]", "green")
                 try:
                     comment_box.press("Control+Enter")
                 except Exception:
@@ -420,7 +456,7 @@ class CommentPoster:
 
             time.sleep(2.5)
 
-            # 9. Kiểm tra thông báo phản hồi từ web sau khi gửi
+            # 10. Kiểm tra thông báo phản hồi từ web sau khi gửi
             success_keywords = ["thành công", "cảm ơn", "chờ duyệt", "đã gửi", "success", "submitted"]
             page_text = page.inner_text("body")[:5000].lower() if page.locator("body").count() > 0 else ""
             

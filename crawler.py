@@ -14,6 +14,7 @@ from comment_poster import CommentPoster
 from telegram_notifier import TelegramNotifier
 from history_manager import CommentHistoryManager
 from ad_blocker import AdBlockerPro
+from cloudflare_handler import CloudflareHandler
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -65,6 +66,10 @@ class GoogleTopBot:
             block_popups=ad_cfg.get("block_popups", True),
             log_fn=self.log
         )
+
+        # Chế độ Spam bình luận (Spam CMT nhiều phim/web, nhiều cmt/phim)
+        self.spam_mode = cmt_cfg.get("spam_mode", False)
+        self.comments_per_movie = cmt_cfg.get("comments_per_movie", 1)
 
         # Tập hợp các domain đã bình luận
         self.commented_domains = set()
@@ -327,6 +332,7 @@ class GoogleTopBot:
                 self.log(f"⚠️ Lỗi kết nối Google: {e}", "red")
                 return
 
+        CloudflareHandler.wait_and_bypass(page, log_fn=self.log)
         time.sleep(1.0)
 
         # 2. Xử lý popup cookie nếu có
@@ -524,6 +530,7 @@ class GoogleTopBot:
                         return
 
                 self._dismiss_ad_overlays(page)
+                CloudflareHandler.wait_and_bypass(page, log_fn=lambda msg, style="cyan": self.log(msg, style, worker_id=worker_id, brand=domain_brand))
                 time.sleep(1.5)
 
                 actual_url = page.url
@@ -584,6 +591,7 @@ class GoogleTopBot:
                         try:
                             page.goto(target_movie_url, wait_until="domcontentloaded", timeout=20000)
                             self._dismiss_ad_overlays(page)
+                            CloudflareHandler.wait_and_bypass(page, log_fn=lambda msg, style="cyan": self.log(msg, style, worker_id=worker_id, brand=domain_brand))
                             time.sleep(1.0)
                         except Exception as e:
                             self.log(f"⚠️ Không thể tải phim này: {e}", "dim", worker_id=worker_id, brand=domain_brand)
@@ -789,6 +797,7 @@ class GoogleTopBot:
             domain_brand = self._get_domain_brand(landing_url, allowed_domains)
             self.log(f"   🌐 Đang mở hệ thống web: [bold cyan]{domain_brand.upper()}[/bold cyan] ({landing_url})", "blue")
             self._dismiss_ad_overlays(new_page)
+            CloudflareHandler.wait_and_bypass(new_page, log_fn=self.log)
 
             # Tìm danh sách phim có TƯƠNG TÁC CAO NHẤT trên web này để bình luận
             hot_movies = []
@@ -818,6 +827,7 @@ class GoogleTopBot:
                     try:
                         new_page.goto(target_movie_url, wait_until="domcontentloaded", timeout=20000)
                         self._dismiss_ad_overlays(new_page)
+                        CloudflareHandler.wait_and_bypass(new_page, log_fn=self.log)
                         time.sleep(1.0)
                     except Exception as e:
                         self.log(f"      ⚠️ Không thể tải phim này: {e}", "dim")
@@ -929,82 +939,94 @@ class GoogleTopBot:
 
             movie_name = movie_info.get("movie_name", current_title)
             movie_desc = movie_info.get("description", "")
-            custom_name = comment_cfg.get("custom_name")
-            custom_email = comment_cfg.get("custom_email")
-            author_name = custom_name if custom_name else self.comment_gen.generate_nickname()
-            author_email = custom_email if custom_email else self.comment_gen.generate_email(author_name)
             custom_templates = comment_cfg.get("custom_templates", [])
 
-            # Kiểm tra xem có nên Trả lời (Reply) bình luận cũ của người khác không
-            existing_cmts = movie_info.get("comments", [])
-            reply_attempted = False
-            is_reply = False
+            comments_count = self.comments_per_movie
+            if self.spam_mode:
+                comments_count = max(comments_count, 2)
 
-            if existing_cmts and self.config.get("interaction", {}).get("enable_reply_mode", True) and random.random() < 0.5:
-                target_cmt = random.choice(existing_cmts[:4])
-                smart_comment, cmt_source = self.comment_gen.generate_reply(
-                    movie_name=movie_name,
-                    target_author="",
-                    target_comment=target_cmt
-                )
-                self.log(f"      💬 [Chế độ trả lời bình luận] Nguồn: [{cmt_source}]", "cyan")
-                self.log(f"         • Bình luận gốc: [dim]\"{target_cmt[:45]}...\"[/dim]", "dim")
-                self.log(f"         • Người gửi: [bold]{author_name}[/bold] ({author_email})", "white")
-                self.log(f"         • Trả lời: [italic yellow]\"{smart_comment}\"[/italic yellow]", "white")
+            for cmt_round in range(1, comments_count + 1):
+                custom_name = comment_cfg.get("custom_name")
+                custom_email = comment_cfg.get("custom_email")
+                author_name = custom_name if custom_name else self.comment_gen.generate_nickname()
+                author_email = custom_email if custom_email else self.comment_gen.generate_email(author_name)
+                round_label = f"[{cmt_round}/{comments_count}] " if comments_count > 1 else ""
 
-                cmt_result = self.comment_poster.reply_to_comment(
-                    page=page,
-                    reply_text=smart_comment,
-                    author_name=author_name,
-                    email=author_email
-                )
+                # Kiểm tra xem có nên Trả lời (Reply) bình luận cũ của người khác không
+                existing_cmts = movie_info.get("comments", [])
+                reply_attempted = False
+                is_reply = False
+
+                if existing_cmts and self.config.get("interaction", {}).get("enable_reply_mode", True) and (cmt_round > 1 or random.random() < 0.5):
+                    target_cmt = random.choice(existing_cmts[:5])
+                    smart_comment, cmt_source = self.comment_gen.generate_reply(
+                        movie_name=movie_name,
+                        target_author="",
+                        target_comment=target_cmt
+                    )
+                    self.log(f"      💬 {round_label}[Chế độ trả lời bình luận] Nguồn: [{cmt_source}]", "cyan")
+                    self.log(f"         • Bình luận gốc: [dim]\"{target_cmt[:45]}...\"[/dim]", "dim")
+                    self.log(f"         • Người gửi: [bold]{author_name}[/bold] ({author_email})", "white")
+                    self.log(f"         • Trả lời: [italic yellow]\"{smart_comment}\"[/italic yellow]", "white")
+
+                    cmt_result = self.comment_poster.reply_to_comment(
+                        page=page,
+                        reply_text=smart_comment,
+                        author_name=author_name,
+                        email=author_email
+                    )
+                    if cmt_result.get("success"):
+                        reply_attempted = True
+                        is_reply = True
+
+                # Nếu không trả lời bình luận cũ hoặc trả lời không thành công thì đăng bình luận mới
+                if not reply_attempted or not cmt_result.get("success"):
+                    smart_comment, cmt_source = self.comment_gen.generate_comment(
+                        movie_name=movie_name,
+                        description=movie_desc,
+                        custom_templates=custom_templates
+                    )
+
+                    self.log(f"      💬 {round_label}[Gửi bình luận mới] Nguồn: [{cmt_source}]", "cyan")
+                    self.log(f"         • Người gửi: [bold]{author_name}[/bold] ({author_email})", "white")
+                    self.log(f"         • Nội dung: [italic yellow]\"{smart_comment}\"[/italic yellow]", "white")
+
+                    cmt_result = self.comment_poster.post_comment(
+                        page=page,
+                        comment_text=smart_comment,
+                        author_name=author_name,
+                        email=author_email
+                    )
+
                 if cmt_result.get("success"):
-                    reply_attempted = True
-                    is_reply = True
+                    self.log(f"         ✅ {cmt_result.get('message')}", "bold green")
+                    # Ghi nhận vào bộ nhớ lịch sử đã bình luận
+                    self.history_mgr.record_comment(
+                        url=current_url,
+                        movie_name=movie_name,
+                        author=author_name,
+                        email=author_email,
+                        comment_text=smart_comment
+                    )
+                else:
+                    self.log(f"         ℹ️ {cmt_result.get('message')}", "dim")
 
-            # Nếu không trả lời bình luận cũ hoặc trả lời không thành công thì đăng bình luận mới
-            if not reply_attempted or not cmt_result.get("success"):
-                smart_comment, cmt_source = self.comment_gen.generate_comment(
-                    movie_name=movie_name,
-                    description=movie_desc,
-                    custom_templates=custom_templates
-                )
+                self.exporter.save_comment_log({
+                    "keyword": keyword,
+                    "movie_name": movie_name,
+                    "url": current_url,
+                    "author": author_name,
+                    "email": author_email,
+                    "comment_text": smart_comment,
+                    "source": cmt_source,
+                    "success": cmt_result.get("success"),
+                    "message": cmt_result.get("message")
+                })
 
-                self.log(f"      💬 [Gửi bình luận mới] Nguồn: [{cmt_source}]", "cyan")
-                self.log(f"         • Người gửi: [bold]{author_name}[/bold] ({author_email})", "white")
-                self.log(f"         • Nội dung: [italic yellow]\"{smart_comment}\"[/italic yellow]", "white")
-
-                cmt_result = self.comment_poster.post_comment(
-                    page=page,
-                    comment_text=smart_comment,
-                    author_name=author_name,
-                    email=author_email
-                )
-
-            if cmt_result.get("success"):
-                self.log(f"         ✅ {cmt_result.get('message')}", "bold green")
-                # Ghi nhận vào bộ nhớ lịch sử đã bình luận
-                self.history_mgr.record_comment(
-                    url=current_url,
-                    movie_name=movie_name,
-                    author=author_name,
-                    email=author_email,
-                    comment_text=smart_comment
-                )
-            else:
-                self.log(f"         ℹ️ {cmt_result.get('message')}", "dim")
-
-            self.exporter.save_comment_log({
-                "keyword": keyword,
-                "movie_name": movie_name,
-                "url": current_url,
-                "author": author_name,
-                "email": author_email,
-                "comment_text": smart_comment,
-                "source": cmt_source,
-                "success": cmt_result.get("success"),
-                "message": cmt_result.get("message")
-            })
+                if cmt_round < comments_count:
+                    pause = random.randint(3, 5)
+                    self.log(f"      ⏳ Nghỉ {pause}s trước khi gửi cmt tiếp theo trên phim này (Spam Mode)...", "dim")
+                    time.sleep(pause)
 
         # Chụp ảnh màn hình lưu bằng chứng
         screenshot_path = ""
