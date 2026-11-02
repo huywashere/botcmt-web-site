@@ -5,12 +5,21 @@ import threading
 from datetime import datetime
 
 class DataExporter:
-    def __init__(self, output_dir="output"):
+    def __init__(self, output_dir="output", save_local_files=False, save_csv=False, save_json=False):
         self.output_dir = output_dir
+        self.save_local_files = save_local_files
+        self.save_csv = save_csv and save_local_files
+        self.save_json = save_json and save_local_files
         self.screenshots_dir = os.path.join(output_dir, "screenshots")
-        os.makedirs(self.output_dir, exist_ok=True)
-        os.makedirs(self.screenshots_dir, exist_ok=True)
         self._lock = threading.Lock()
+
+        if self.save_local_files:
+            os.makedirs(self.output_dir, exist_ok=True)
+            os.makedirs(self.screenshots_dir, exist_ok=True)
+            self._init_csv()
+        else:
+            # Tạo thư mục tạm để lưu ảnh trước khi đẩy lên Telegram
+            os.makedirs(self.screenshots_dir, exist_ok=True)
 
         self.csv_path = os.path.join(self.output_dir, "visit_history.csv")
         self.json_path = os.path.join(self.output_dir, "visit_history.json")
@@ -72,6 +81,8 @@ class DataExporter:
 
     def save_visit(self, data: dict):
         """Lưu một bản ghi truy cập vào CSV và JSON (Thread-Safe)."""
+        if not self.save_local_files:
+            return
         with self._lock:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -108,6 +119,8 @@ class DataExporter:
 
     def save_movie_data(self, data: dict):
         """Lưu dữ liệu cào phim chi tiết (Thread-Safe)."""
+        if not self.save_local_files:
+            return
         with self._lock:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             comments = data.get("comments", [])
@@ -147,6 +160,8 @@ class DataExporter:
 
     def save_comment_log(self, data: dict):
         """Lưu lịch sử đã tự động gửi bình luận trên web phim (Thread-Safe)."""
+        if not self.save_local_files:
+            return
         with self._lock:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 

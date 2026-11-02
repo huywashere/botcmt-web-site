@@ -1017,6 +1017,16 @@ class GoogleTopBot:
                     self.notifier.send_message(tg_caption)
             self.log("      📱 Đã gửi báo cáo Telegram kèm link trực tiếp!", "cyan", worker_id=worker_id, brand=domain_brand)
 
+            # Tự động xóa ảnh tạm trên máy sau khi gửi Telegram (không lưu rác trong máy tính)
+            output_cfg = self.config.get("output", {})
+            clean_screenshot = output_cfg.get("clean_screenshots_after_send", True) or not output_cfg.get("save_local_files", False)
+            if clean_screenshot and screenshot_path and os.path.exists(screenshot_path):
+                try:
+                    os.remove(screenshot_path)
+                    self.log("      🧹 Đã dọn dẹp ảnh tạm trên máy (Không lưu rác trong ổ cứng)!", "dim", worker_id=worker_id, brand=domain_brand)
+                except Exception:
+                    pass
+
     def _simulate_reading(self, page: Page, total_duration: float):
         self.log("   📜 Đang cuộn trang xem danh sách phim / bài viết...", "dim")
         start = time.time()

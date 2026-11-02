@@ -206,15 +206,27 @@ def setup_login_session(config, target_email: str = ""):
         console.print("[cyan]Từ bây giờ, mọi lần chạy bot sẽ tự động nhận diện tài khoản đã đăng nhập này.[/cyan]\n")
 
 def run_once(config, target_keywords):
-    exporter = DataExporter(output_dir=config["output"]["output_dir"])
+    out_cfg = config.get("output", {})
+    save_local = out_cfg.get("save_local_files", False)
+    exporter = DataExporter(
+        output_dir=out_cfg.get("output_dir", "output"),
+        save_local_files=save_local,
+        save_csv=out_cfg.get("save_csv", False),
+        save_json=out_cfg.get("save_json", False)
+    )
     bot = GoogleTopBot(config=config, exporter=exporter, console=console)
     bot.run(keywords=target_keywords)
 
-    console.print(f"\n[bold green]🎉 Hoàn tất phiên chạy! Báo cáo đã lưu tại:[/bold green] [bold cyan]{config['output']['output_dir']}[/bold cyan]")
-    console.print(f"   • Lịch sử gửi bình luận: [cyan]{exporter.comments_csv_path}[/cyan]")
-    console.print(f"   • Dữ liệu phim chi tiết: [cyan]{exporter.movies_csv_path}[/cyan]")
-    console.print(f"   • Lịch sử truy cập web: [cyan]{exporter.csv_path}[/cyan]")
-    console.print(f"   • Ảnh chụp màn hình: [cyan]{exporter.screenshots_dir}[/cyan]\n")
+    if save_local:
+        console.print(f"\n[bold green]🎉 Hoàn tất phiên chạy! Báo cáo đã lưu tại:[/bold green] [bold cyan]{config['output']['output_dir']}[/bold cyan]")
+        console.print(f"   • Lịch sử gửi bình luận: [cyan]{exporter.comments_csv_path}[/cyan]")
+        console.print(f"   • Dữ liệu phim chi tiết: [cyan]{exporter.movies_csv_path}[/cyan]")
+        console.print(f"   • Lịch sử truy cập web: [cyan]{exporter.csv_path}[/cyan]")
+        console.print(f"   • Ảnh chụp màn hình: [cyan]{exporter.screenshots_dir}[/cyan]\n")
+    else:
+        console.print(f"\n[bold green]🎉 Hoàn tất phiên chạy! Kết quả và ảnh chụp đã gửi trực tiếp về Telegram![/bold green]")
+        console.print(f"   📱 Kênh nhận báo cáo: [bold cyan]Bot Telegram (@webphim_comment_bot)[/bold cyan]")
+        console.print(f"   🧹 Không lưu file trong máy tính: [dim]Đã xóa sạch ảnh tạm và tắt ghi file CSV/JSON trên ổ cứng.[/dim]\n")
 
 def main():
     print_banner()
@@ -247,6 +259,8 @@ def main():
     parser.add_argument("--no-multithread", action="store_true", help="Tắt chế độ đa luồng, chuyển về chạy đơn luồng tuần tự")
     parser.add_argument("--no-fake-watch", action="store_true", help="Tắt tính năng giả lập bấm xem video phim")
     parser.add_argument("--no-reply", action="store_true", help="Tắt chế độ trả lời bình luận của người khác (chỉ gửi cmt mới)")
+    parser.add_argument("--save-files", action="store_true", help="Lưu dữ liệu và ảnh ra ổ cứng máy tính (mặc định: tắt để chỉ gửi về Telegram)")
+    parser.add_argument("--no-files", "--tele-only", action="store_true", help="Không lưu file rác trong máy, chỉ gửi trực tiếp về Telegram")
 
     args = parser.parse_args()
 
@@ -330,6 +344,17 @@ def main():
 
     if args.no_reply:
         config.setdefault("interaction", {})["enable_reply_mode"] = False
+
+    if args.save_files:
+        config.setdefault("output", {})["save_local_files"] = True
+        config["output"]["save_csv"] = True
+        config["output"]["save_json"] = True
+        config["output"]["clean_screenshots_after_send"] = False
+    elif args.no_files:
+        config.setdefault("output", {})["save_local_files"] = False
+        config["output"]["save_csv"] = False
+        config["output"]["save_json"] = False
+        config["output"]["clean_screenshots_after_send"] = True
 
     # Lấy danh sách từ khóa
     target_keywords = []
@@ -417,6 +442,9 @@ def main():
 
     table.add_row("Chế độ hiển thị", "Chạy ngầm (Headless)" if config["browser"]["headless"] else "Mở trình duyệt (Visible)")
     table.add_row("Thời gian ở lại web", f"{config['behavior']['min_stay_seconds']}s - {config['behavior']['max_stay_seconds']}s")
+    save_local = config.get("output", {}).get("save_local_files", False)
+    storage_mode = "Lưu file CSV/JSON trong máy" if save_local else "[bold green]Chỉ gửi về Telegram (Không lưu file rác trong máy)[/bold green]"
+    table.add_row("Chế độ lưu trữ", storage_mode)
 
     console.print(table)
     console.print()
