@@ -22,6 +22,10 @@ class TelegramNotifier:
                 "parse_mode": "Markdown"
             }
             resp = requests.post(url, json=payload, timeout=10)
+            if resp.status_code != 200:
+                # Fallback gửi không định dạng markdown nếu URL/tên có ký tự đặc biệt
+                payload.pop("parse_mode", None)
+                resp = requests.post(url, json=payload, timeout=10)
             return resp.status_code == 200
         except Exception:
             return False
@@ -40,6 +44,10 @@ class TelegramNotifier:
                     "parse_mode": "Markdown"
                 }
                 resp = requests.post(url, data=data, files=files, timeout=20)
+                if resp.status_code != 200:
+                    data.pop("parse_mode", None)
+                    with open(photo_path, "rb") as f2:
+                        resp = requests.post(url, data=data, files={"photo": f2}, timeout=20)
                 return resp.status_code == 200
         except Exception:
             # Fallback nếu gửi ảnh lỗi: gửi tin nhắn text

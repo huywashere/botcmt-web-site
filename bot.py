@@ -117,6 +117,57 @@ def load_keywords_from_file(filepath: str) -> list:
                     keywords.append(kw)
     return keywords
 
+def setup_login_session(config):
+    """
+    Mở trình duyệt trực tiếp với thư mục profile để người dùng đăng nhập tài khoản
+    Google / Gmail hoặc tài khoản các web phim (Motchill, Motphim, Phimmoi, Rophim).
+    Sau khi đăng nhập xong, phiên (cookies, localStorage, session tokens) sẽ được lưu vĩnh viễn.
+    """
+    from playwright.sync_api import sync_playwright
+
+    profile_dir = config["browser"].get("profile_dir", "user_profile")
+    os.makedirs(profile_dir, exist_ok=True)
+    abs_profile = os.path.abspath(profile_dir)
+
+    console.print(Panel(
+        "[bold cyan]🔑 CHẾ ĐỘ ĐĂNG NHẬP & THIẾT LẬP TÀI KHOẢN (PERSISTENT PROFILE)[/bold cyan]\n\n"
+        f"• Thư mục lưu dữ liệu duyệt web: [bold green]{abs_profile}[/bold green]\n"
+        "• Trình duyệt sẽ mở ra. Bạn có thể:\n"
+        "  1. Đăng nhập Google / Gmail (accounts.google.com)\n"
+        "  2. Đăng nhập tài khoản trên các web phim (Motchill, Motphim, Phimmoi, Rophim)\n"
+        "  3. Lưu tài khoản, mật khẩu hoặc cookie thoải mái\n\n"
+        "[bold yellow]👉 Sau khi đăng nhập xong, hãy quay lại cửa sổ console này và nhấn phím ENTER để hoàn tất.[/bold yellow]",
+        border_style="cyan"
+    ))
+
+    with sync_playwright() as p:
+        args = [
+            "--disable-blink-features=AutomationControlled",
+            "--start-maximized"
+        ]
+        chrome_path_exists = (
+            os.path.exists("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe") or 
+            os.path.exists("C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe")
+        )
+        context = p.chromium.launch_persistent_context(
+            user_data_dir=abs_profile,
+            headless=False,
+            channel="chrome" if chrome_path_exists else None,
+            args=args,
+            viewport=None
+        )
+        page = context.pages[0] if context.pages else context.new_page()
+        try:
+            page.goto("https://accounts.google.com", timeout=30000)
+        except Exception as e:
+            console.print(f"[dim]Lưu ý mở trang: {e}[/dim]")
+
+        console.print("[bold green]🌐 Trình duyệt đã mở. Hãy đăng nhập tài khoản của bạn trên trình duyệt...[/bold green]")
+        input("\n👉 [Nhấn ENTER tại đây sau khi bạn đã hoàn tất đăng nhập trên trình duyệt...] ")
+        context.close()
+        console.print("\n[bold green]✅ ĐÃ LƯU PHIÊN ĐĂNG NHẬP VĨNH VIỄN VÀO USER_PROFILE![/bold green]")
+        console.print("[cyan]Từ bây giờ, mọi lần chạy bot sẽ tự động nhận diện tài khoản đã đăng nhập này.[/cyan]\n")
+
 def run_once(config, target_keywords):
     exporter = DataExporter(output_dir=config["output"]["output_dir"])
     bot = GoogleTopBot(config=config, exporter=exporter, console=console)
@@ -135,7 +186,9 @@ def main():
     parser.add_argument("-k", "--keyword", type=str, help="Từ khóa phim cần tìm kiếm")
     parser.add_argument("-f", "--file", type=str, help="File danh sách từ khóa")
     parser.add_argument("-t", "--top", type=int, help="Số lượng top web phim cần cào/bình luận")
-    parser.add_argument("--author", type=str, help="Tên người bình luận")
+    parser.add_argument("--author", type=str, help="Tên người bình luận (mặc định: tự sinh tên người Việt tự nhiên)")
+    parser.add_argument("--email", type=str, help="Địa chỉ Gmail/Email người bình luận (mặc định: tự sinh Gmail khớp tên)")
+    parser.add_argument("--setup-login", "--login", action="store_true", help="Mở trình duyệt để đăng nhập Google/Gmail hoặc web phim (lưu phiên vĩnh viễn)")
     parser.add_argument("--cmts-per-web", type=int, help="Số lượng phim Hot muốn bình luận trên mỗi website (mặc định: 3)")
     parser.add_argument("--comment", action="store_true", help="Bật tính năng tự động bình luận")
     parser.add_argument("--no-comment", action="store_true", help="Tắt tính năng tự động bình luận")
@@ -154,12 +207,20 @@ def main():
     # Tải cấu hình
     config = load_config()
 
+    # Chế độ thiết lập đăng nhập profile
+    if args.setup_login:
+        setup_login_session(config)
+        return
+
     # Áp dụng tham số dòng lệnh
     if args.top:
         config["search"]["top_limit"] = args.top
 
     if args.author:
         config["comment"]["custom_name"] = args.author
+
+    if args.email:
+        config["comment"]["custom_email"] = args.email
 
     if args.cmts_per_web:
         config["comment"]["comments_per_website"] = args.cmts_per_web
@@ -230,6 +291,9 @@ def main():
     cmt_status = "Đang BẬT" if config["comment"]["auto_comment"] else "Đang TẮT"
     table.add_row("Tự động bình luận thông minh", cmt_status)
     if config["comment"]["auto_comment"]:
+        author_val = config["comment"].get("custom_name") or "(Tự động sinh ngẫu nhiên)"
+        email_val = config["comment"].get("custom_email") or "(Tự động sinh Gmail khớp tên)"
+        table.add_row("Tên & Gmail người gửi", f"{author_val} | {email_val}")
         ai_status = "Bật (Ưu tiên Gemini AI khi có key)" if config["comment"].get("use_ai") else "Chỉ dùng Template thông minh"
         table.add_row("Chế độ soạn bình luận", ai_status)
         cmts_count = config["comment"].get("comments_per_website", 3)

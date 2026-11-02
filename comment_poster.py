@@ -3,19 +3,20 @@ import time
 from playwright.sync_api import Page
 
 class CommentPoster:
-    """Tự động tìm kiếm khung bình luận và gửi bình luận trên trang web phim."""
+    """Tự động tìm kiếm khung bình luận, điền Tên, Gmail, Nội dung và gửi bình luận."""
 
     def __init__(self, log_fn=None):
         self.log = log_fn if log_fn else print
 
     def post_comment(self, page: Page, comment_text: str, author_name: str, email: str = "") -> dict:
         """
-        Tìm khung bình luận trên trang, điền tên và nội dung, sau đó nhấn gửi.
-        Trả về dict: {"success": bool, "message": str}
+        Tìm khung bình luận trên trang, điền tên và email/gmail, nhập nội dung, sau đó gửi.
+        Trả về dict: {"success": bool, "message": str, "verified": bool}
         """
         result = {
             "success": False,
-            "message": ""
+            "message": "",
+            "verified": False
         }
 
         try:
@@ -34,6 +35,7 @@ class CommentPoster:
                 "#comment-form textarea",
                 ".box-comment textarea",
                 ".comment-box textarea",
+                "div[contenteditable='true']",
                 "textarea"
             ]
 
@@ -51,11 +53,11 @@ class CommentPoster:
                 result["message"] = "Không tìm thấy khung bình luận trực tiếp (hoặc trang yêu cầu đăng nhập tài khoản / dùng Facebook iframe)."
                 return result
 
-            # Cuộn trang đến vị trí khung bình luận
+            # Cuộn trang đến khung bình luận mượt mà
             comment_box.scroll_into_view_if_needed()
             time.sleep(1.0)
 
-            # 2. Tìm ô nhập tên (Author / Name) nếu có
+            # 2. Tìm và điền ô Tên (Name / Author / Nickname) nếu có
             name_selectors = [
                 "input[name*='name']",
                 "input[name*='author']",
@@ -81,29 +83,36 @@ class CommentPoster:
                 name_input.click()
                 name_input.fill("")
                 for ch in author_name:
-                    name_input.type(ch, delay=random.randint(40, 90))
+                    name_input.type(ch, delay=random.randint(40, 80))
                 time.sleep(0.5)
 
-            # 3. Tìm ô nhập email nếu trang yêu cầu
-            email_selectors = [
-                "input[type='email']",
-                "input[name*='email']",
-                "input[placeholder*='email' i]"
-            ]
-            for sel in email_selectors:
-                el = page.locator(sel).first
-                if el.count() > 0 and el.is_visible():
-                    el.click()
-                    el.fill(email)
-                    time.sleep(0.4)
-                    break
+            # 3. Tìm và điền ô Gmail / Email nếu có
+            if email:
+                email_selectors = [
+                    "input[type='email']",
+                    "input[name*='email']",
+                    "input[name*='mail']",
+                    "input[id*='email']",
+                    "input[placeholder*='email' i]",
+                    "input[placeholder*='gmail' i]",
+                    "input[placeholder*='thư điện tử' i]"
+                ]
+                for sel in email_selectors:
+                    el = page.locator(sel).first
+                    if el.count() > 0 and el.is_visible():
+                        el.click()
+                        el.fill("")
+                        for ch in email:
+                            el.type(ch, delay=random.randint(25, 60))
+                        time.sleep(0.5)
+                        break
 
             # 4. Nhập nội dung bình luận vào ô Textarea
             comment_box.click()
             comment_box.fill("")
             for ch in comment_text:
-                comment_box.type(ch, delay=random.randint(25, 70))
-            time.sleep(1.0)
+                comment_box.type(ch, delay=random.randint(25, 65))
+            time.sleep(1.2)
 
             # 5. Tìm nút Gửi (Submit button)
             submit_selectors = [
@@ -133,18 +142,25 @@ class CommentPoster:
 
             if submit_btn:
                 submit_btn.click()
-                time.sleep(2.0)
-                result["success"] = True
-                result["message"] = "Đã gửi bình luận thành công!"
             else:
-                # Nếu không thấy nút submit riêng, thử nhấn phím Enter
                 comment_box.press("Enter")
-                time.sleep(2.0)
-                result["success"] = True
-                result["message"] = "Đã gửi bình luận (bằng phím Enter)!"
+
+            time.sleep(2.5)
+
+            # 6. Kiểm tra thông báo phản hồi từ web sau khi gửi
+            success_keywords = ["thành công", "cảm ơn", "chờ duyệt", "đã gửi", "success", "submitted"]
+            page_text = page.inner_text("body")[:4000].lower() if page.locator("body").count() > 0 else ""
+            
+            verified = any(kw in page_text for kw in success_keywords) or comment_text.lower() in page_text
+
+            result["success"] = True
+            result["verified"] = verified
+            if verified:
+                result["message"] = "Đã gửi và xác nhận bình luận thành công trên web!"
+            else:
+                result["message"] = "Đã gửi bình luận (hệ thống web đã nhận request)!"
 
         except Exception as e:
             result["message"] = f"Lỗi trong quá trình gửi bình luận: {str(e)[:100]}"
 
         return result
-

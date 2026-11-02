@@ -503,8 +503,9 @@ class GoogleTopBot:
             movie_name = movie_info.get("movie_name", current_title)
             movie_desc = movie_info.get("description", "")
             custom_name = comment_cfg.get("custom_name")
+            custom_email = comment_cfg.get("custom_email")
             author_name = custom_name if custom_name else self.comment_gen.generate_nickname()
-            author_email = self.comment_gen.generate_email(author_name)
+            author_email = custom_email if custom_email else self.comment_gen.generate_email(author_name)
             custom_templates = comment_cfg.get("custom_templates", [])
 
             smart_comment, cmt_source = self.comment_gen.generate_comment(
@@ -514,7 +515,7 @@ class GoogleTopBot:
             )
 
             self.log(f"      💬 [Gửi bình luận] Nguồn: [{cmt_source}]", "cyan")
-            self.log(f"         • Người gửi: [bold]{author_name}[/bold]", "white")
+            self.log(f"         • Người gửi: [bold]{author_name}[/bold] ({author_email})", "white")
             self.log(f"         • Nội dung: [italic yellow]\"{smart_comment}\"[/italic yellow]", "white")
 
             cmt_result = self.comment_poster.post_comment(
@@ -534,6 +535,7 @@ class GoogleTopBot:
                 "movie_name": movie_name,
                 "url": current_url,
                 "author": author_name,
+                "email": author_email,
                 "comment_text": smart_comment,
                 "source": cmt_source,
                 "success": cmt_result.get("success"),
@@ -560,12 +562,13 @@ class GoogleTopBot:
         # Gửi thông báo Telegram nếu bật
         if self.notifier.enabled:
             movie_name = movie_info.get("movie_name", current_title)
-            status_icon = "✅ Đã bình luận" if cmt_result.get("success") else "ℹ️ Đã xem"
+            status_icon = "✅ Đã gửi bình luận" if cmt_result.get("success") else "ℹ️ Đã xem trang"
             tg_caption = (
-                f"🎬 *BOT CÀO PHIM & BÌNH LUẬN*\n"
+                f"🎬 *BOT CÀO PHIM & BÌNH LUẬN*\n\n"
                 f"🍿 *Phim:* {movie_name}\n"
-                f"🌐 *Website:* [{domain_brand.upper()}] {current_url[:60]}\n"
-                f"👤 *Tác giả:* {author_name or 'Ẩn danh'}\n"
+                f"🌐 *Trang web:* [{domain_brand.upper()}]\n"
+                f"🔗 *Link phim:* {current_url}\n"
+                f"👤 *Người gửi:* {author_name or 'Ẩn danh'} ({author_email})\n"
                 f"💬 *Bình luận:* \"{smart_comment}\"\n"
                 f"📊 *Trạng thái:* {status_icon}\n"
                 f"⏱️ *Thời gian xem:* {elapsed}s"
@@ -574,7 +577,7 @@ class GoogleTopBot:
                 self.notifier.send_photo(screenshot_path, tg_caption)
             else:
                 self.notifier.send_message(tg_caption)
-            self.log("      📱 Đã gửi báo cáo Telegram!", "cyan")
+            self.log("      📱 Đã gửi báo cáo Telegram kèm link trực tiếp!", "cyan")
 
     def _simulate_reading(self, page: Page, total_duration: float):
         self.log("   📜 Đang cuộn trang xem danh sách phim / bài viết...", "dim")
