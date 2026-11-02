@@ -88,6 +88,34 @@ class GoogleTopBot:
             else:
                 print(full_msg)
 
+    @staticmethod
+    def _sync_worker_profile(base_profile: str, worker_profile: str):
+        """Sao chép session/cookies đăng nhập từ profile chính sang worker profile để đa luồng giữ nguyên đăng nhập."""
+        if not os.path.exists(base_profile):
+            return
+        try:
+            import shutil
+            os.makedirs(worker_profile, exist_ok=True)
+            local_state = os.path.join(base_profile, "Local State")
+            w_local_state = os.path.join(worker_profile, "Local State")
+            if os.path.exists(local_state) and not os.path.exists(w_local_state):
+                shutil.copy2(local_state, w_local_state)
+
+            base_default = os.path.join(base_profile, "Default")
+            w_default = os.path.join(worker_profile, "Default")
+            if os.path.exists(base_default):
+                os.makedirs(w_default, exist_ok=True)
+                for item in ["Network", "Local Storage", "Accounts", "Preferences"]:
+                    s = os.path.join(base_default, item)
+                    d = os.path.join(w_default, item)
+                    if os.path.exists(s) and not os.path.exists(d):
+                        if os.path.isdir(s):
+                            shutil.copytree(s, d, dirs_exist_ok=True)
+                        else:
+                            shutil.copy2(s, d)
+        except Exception:
+            pass
+
     def _init_browser(self, p, worker_id: int = 0):
         browser_cfg = self.config.get("browser", {})
         proxy_cfg = self.config.get("proxy", {})
@@ -98,6 +126,8 @@ class GoogleTopBot:
         use_persistent = browser_cfg.get("use_persistent_profile", True)
         base_profile = browser_cfg.get("profile_dir", "user_profile")
         profile_dir = os.path.join(base_profile, f"worker_{worker_id}") if worker_id > 0 else base_profile
+        if worker_id > 0 and use_persistent:
+            self._sync_worker_profile(base_profile, profile_dir)
 
         # Cấu hình Proxy nếu có
         proxy_dict = None

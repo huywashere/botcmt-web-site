@@ -9,30 +9,32 @@ NAMES = [
     "Quỳnh Nga", "Tuấn Kiệt", "Mai Phương", "Đăng Khoa", "Lan Anh"
 ]
 
-SMART_COMMENT_TEMPLATES = [
-    "Vừa cày xong bộ {movie_name}, công nhận kịch bản cuốn dã man, đoạn kết bất ngờ ghê!",
-    "{movie_name} xem hay thực sự mọi người ơi, diễn xuất của dàn diễn viên nhập tâm dã man.",
-    "Đợi mãi {movie_name} bản vietsub nét căng thế này, âm thanh với góc quay đỉnh chóp luôn!",
-    "Ai còn đang phân vân thì bật {movie_name} lên xem ngay đi, không phí thời gian tí nào đâu 10/10.",
-    "Kịch bản phim {movie_name} chắc tay thật, xem từ đầu đến cuối nghẹt thở không rời mắt được phút nào.",
-    "Phim {movie_name} này xem giải trí cuối tuần cùng bạn bè siêu hợp lý luôn, màu phim nghệ thuật ghê.",
-    "Mới xem xong {movie_name}, đoạn cao trào làm mình rùng mình luôn, nhạc phim xuất sắc!",
-    "Bản vietsub của {movie_name} dịch mượt mà sát nghĩa ghê, cảm ơn subteam nhiều nhé!",
-    "Thích nhất thần thái của nhân vật chính trong {movie_name}, coi cuốn từ tập đầu đến giờ.",
-    "Cốt truyện {movie_name} lớp lang bất ngờ phết, xem xong vẫn ngồi suy ngẫm mãi, đáng xem nha cả nhà."
+DEFAULT_FLEXPHIM_TEMPLATES = [
+    "qua flexphim xem đi mọi người",
+    "qua flexphim xem đi mn ơi, full hd không quảng cáo",
+    "qua flexphim xem đi mn ơi",
+    "bên flexphim xem mượt hơn nè mọi người ơi",
+    "qua flexphim xem đi cả nhà ơi",
+    "phim này qua flexphim xem nét hơn nè mn",
+    "qua flexphim xem mượt mà không quảng cáo mn ơi",
+    "qua flexphim xem đi mọi người ơi, load nhanh lắm",
+    "phim này bên flexphim có bản đẹp rồi qua xem đi mọi người",
+    "mọi người qua flexphim xem cho mượt nè"
 ]
 
-SMART_REPLY_TEMPLATES = [
-    "Chuẩn luôn bạn ơi, mình cũng thấy đoạn đấy xúc động dã man!",
-    "Đồng quan điểm với bạn, {movie_name} này xem cuốn thật sự luôn.",
-    "Vừa cày xong nghe bạn nói mới để ý, công nhận kịch bản lớp lang ghê.",
-    "Cảm ơn review của bạn nhé, nhờ bạn khen mà mình xem thử thấy hay bất ngờ!",
-    "Thực sự luôn bạn, đoạn cao trào làm mình rùng mình luôn ấy.",
-    "Đúng ý mình luôn, bản vietsub dịch cũng mượt và nét nữa chứ!"
+DEFAULT_FLEXPHIM_REPLY_TEMPLATES = [
+    "qua flexphim xem đi bạn ơi mượt lắm",
+    "qua flexphim xem đi mn ơi",
+    "chuẩn luôn bạn, mà qua flexphim xem nét hơn nè",
+    "bên flexphim có bản full hd không quảng cáo đó bạn qua xem thử đi",
+    "qua flexphim xem đi mọi người",
+    "mình xem bên flexphim thấy load nhanh hơn hẳn nè bạn",
+    "qua flexphim xem mượt lắm bạn ơi, không lo bị gián đoạn",
+    "qua flexphim xem đi mn ơi, full hd nét căng"
 ]
 
 class CommentGenerator:
-    """Tạo bình luận thông minh (kết hợp AI Gemini và templates thông minh)."""
+    """Tạo bình luận thông minh quảng bá Flexphim tự nhiên, mượt mà."""
 
     def __init__(self, ai_api_key: str = "", use_ai: bool = True):
         self.ai_commenter = AICommenter(api_key=ai_api_key, enabled=use_ai)
@@ -72,52 +74,45 @@ class CommentGenerator:
         title = re.sub(r'[,|/–\-]+', ' ', title)
         title = re.sub(r'\s+', ' ', title).strip()
 
-        return title if len(title) >= 3 else "bộ phim này"
+        return title if len(title) >= 3 else "phim này"
 
     def generate_comment(self, movie_name: str, description: str = "", custom_templates: list = None) -> tuple:
         """
-        Tạo bình luận thông minh.
-        Ưu tiên dùng Gemini AI nếu có cấu hình.
-        Trả về: (câu bình luận, nguồn: 'AI Gemini' hoặc 'Template')
+        Tạo câu bình luận quảng bá Flexphim tự nhiên.
+        Ưu tiên custom_templates nếu người dùng thiết lập trong cấu hình.
         """
         clean_name = self.clean_movie_title(movie_name)
 
-        # 1. Thử dùng AI Gemini
-        if self.ai_commenter.enabled:
+        # 1. Dùng custom_templates nếu có
+        if custom_templates and len(custom_templates) > 0:
+            template = random.choice(custom_templates)
+            comment = template.format(movie_name=clean_name)
+            return comment, "Custom Flexphim Template"
+
+        # 2. Thử dùng AI Gemini (nếu bật và có key)
+        if self.ai_commenter.enabled and self.ai_commenter.api_key:
             ai_comment = self.ai_commenter.generate_ai_comment(clean_name, description)
             if ai_comment and len(ai_comment) > 10:
                 return ai_comment, "AI Gemini"
 
-        # 2. Dùng Template thông minh tự nhiên
-        templates = SMART_COMMENT_TEMPLATES
-        if custom_templates and len(custom_templates) > 0:
-            templates = custom_templates + SMART_COMMENT_TEMPLATES
-
-        template = random.choice(templates)
+        # 3. Dùng Template Flexphim chuẩn
+        template = random.choice(DEFAULT_FLEXPHIM_TEMPLATES)
         comment = template.format(movie_name=clean_name)
-        return comment, "Template"
+        return comment, "Flexphim Template"
 
     def generate_reply(self, movie_name: str, target_author: str = "", target_comment: str = "") -> tuple:
         """
-        Tạo câu trả lời (Reply) bình luận của người khác.
-        Ưu tiên dùng AI Gemini phân tích bình luận gốc để trả lời tự nhiên.
+        Tạo câu trả lời (Reply) bình luận của người khác quảng bá Flexphim.
         """
         clean_name = self.clean_movie_title(movie_name)
 
-        # 1. Thử dùng AI Gemini
-        if self.ai_commenter.enabled and target_comment:
-            ai_reply = self.ai_commenter.generate_ai_reply(clean_name, target_author, target_comment)
-            if ai_reply and len(ai_reply) > 5:
-                return ai_reply, "AI Gemini Reply"
-
-        # 2. Dùng Template Reply
-        tpl = random.choice(SMART_REPLY_TEMPLATES)
+        tpl = random.choice(DEFAULT_FLEXPHIM_REPLY_TEMPLATES)
         reply_text = tpl.format(movie_name=clean_name)
         if target_author and len(target_author.strip()) > 1 and not target_author.startswith("@"):
-            if random.random() < 0.5:
+            if random.random() < 0.4:
                 reply_text = f"@{target_author} {reply_text}"
 
-        return reply_text, "Template Reply"
+        return reply_text, "Flexphim Reply"
 
     @staticmethod
     def generate_nickname() -> str:

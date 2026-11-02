@@ -4,7 +4,7 @@ import time
 from playwright.sync_api import Page
 
 class CommentPoster:
-    """Tự động tìm kiếm khung bình luận, điền Tên, Gmail, Nội dung, giải Captcha và gửi bình luận."""
+    """Tự động tìm kiếm khung bình luận, bấm nút mở form nếu ẩn, điền Tên, Gmail, Nội dung, giải Captcha và gửi bình luận."""
 
     def __init__(self, log_fn=None):
         self.log = log_fn if log_fn else print
@@ -14,14 +14,18 @@ class CommentPoster:
         """Click an toàn: Tự động dùng force=True hoặc dispatch_event nếu bị banner quảng cáo che khuất."""
         try:
             element.click(timeout=2500, delay=delay)
+            return True
         except Exception:
             try:
                 element.click(force=True, timeout=1500, delay=delay)
+                return True
             except Exception:
                 try:
                     element.dispatch_event("click")
+                    return True
                 except Exception:
                     pass
+        return False
 
     def vote_5_stars(self, page: Page) -> bool:
         """Tự động tìm nút vote 5 sao trên trang phim và bấm đánh giá."""
@@ -55,7 +59,7 @@ class CommentPoster:
             pass
         return False
 
-    def solve_math_captcha(self, page: Page) -> bool:
+    def solve_math_captcha(self, page_or_frame) -> bool:
         """Tự động phát hiện và giải câu hỏi bảo vệ / Math Captcha (ví dụ: 3 + 5 = ?)."""
         try:
             captcha_inputs = [
@@ -69,7 +73,7 @@ class CommentPoster:
                 "input[placeholder*='câu hỏi' i]"
             ]
             for sel in captcha_inputs:
-                inp = page.locator(sel).first
+                inp = page_or_frame.locator(sel).first
                 if inp.count() > 0 and inp.is_visible():
                     context_text = ""
                     try:
@@ -98,47 +102,63 @@ class CommentPoster:
 
     def reply_to_comment(self, page: Page, reply_text: str, author_name: str, email: str = "") -> dict:
         """
-        Tìm bình luận có sẵn của người khác, bấm nút 'Trả lời' (Reply) và gửi bình luận.
+        Tìm bình luận có sẵn của người khác, bấm nút '↳ Trả lời' (Reply) và gửi bình luận.
         Nếu không có nút Trả lời, trả về success=False để chuyển sang bình luận mới thông thường.
         """
         result = {"success": False, "message": "", "replied_to": ""}
         try:
+            # Cuộn xuống khu vực bình luận trước
+            try:
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight * 0.75)")
+                time.sleep(1.2)
+            except Exception:
+                pass
+
             reply_selectors = [
-                "a:has-text('Trả lời')",
                 "button:has-text('Trả lời')",
-                ".comment-reply-link",
-                ".btn-reply",
+                "a:has-text('Trả lời')",
+                "span:has-text('Trả lời')",
+                "div:has-text('Trả lời')",
+                "*[class*='reply']:has-text('Trả lời')",
+                "*[onclick*='reply' i]",
                 "a.reply",
                 "button.reply",
-                "a:has-text('Reply')"
+                ".comment-reply-link",
+                ".btn-reply",
+                "a:has-text('Reply')",
+                "button:has-text('Reply')"
             ]
             reply_btn = None
             for sel in reply_selectors:
                 btns = page.locator(sel).all()
-                for b in btns[:6]:
-                    if b.is_visible():
-                        reply_btn = b
-                        break
+                for b in btns[:8]:
+                    try:
+                        if b.is_visible():
+                            reply_btn = b
+                            break
+                    except Exception:
+                        pass
                 if reply_btn:
                     break
 
             if not reply_btn:
-                result["message"] = "Không tìm thấy nút Trả lời bình luận cũ"
+                result["message"] = "Không tìm thấy nút Trả lời bình luận cũ (hoặc web yêu cầu đăng nhập)"
                 return result
 
             # Lấy thông tin trích dẫn người được trả lời
             try:
-                parent_el = reply_btn.locator("xpath=ancestor::*[contains(@class, 'comment') or contains(@id, 'comment')][1]")
+                parent_el = reply_btn.locator("xpath=ancestor::*[contains(@class, 'comment') or contains(@id, 'comment') or contains(@class, 'flex')][1]")
                 result["replied_to"] = parent_el.inner_text()[:40].replace("\n", " ").strip()
             except Exception:
                 pass
 
             reply_btn.scroll_into_view_if_needed()
-            time.sleep(0.6)
-            reply_btn.click()
-            time.sleep(1.0)
+            time.sleep(0.5)
+            self._safe_click(reply_btn)
+            self.log(f"      ↳ Đã bấm nút 'Trả lời' bình luận cũ: '{result['replied_to'][:30]}...'", "cyan")
+            time.sleep(1.2)
 
-            # Điền vào form bình luận xuất hiện
+            # Điền vào form bình luận xuất hiện sau khi bấm Trả lời
             cmt_res = self.post_comment(page, reply_text, author_name, email)
             cmt_res["replied_to"] = result["replied_to"]
             return cmt_res
@@ -148,8 +168,8 @@ class CommentPoster:
 
     def post_comment(self, page: Page, comment_text: str, author_name: str, email: str = "") -> dict:
         """
-        Tìm khung bình luận trên trang, điền tên và email/gmail, nhập nội dung, sau đó gửi.
-        Trả về dict: {"success": bool, "message": str, "verified": bool}
+        Tìm khung bình luận trên trang, tự động kích hoạt nút mở form nếu cần,
+        điền tên, email/gmail, nội dung và gửi.
         """
         result = {
             "success": False,
@@ -158,7 +178,13 @@ class CommentPoster:
         }
 
         try:
-            # 1. Tìm ô nhập bình luận (Textarea)
+            # Cuộn trang xuống khu vực bình luận
+            try:
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight * 0.7)")
+                time.sleep(1.0)
+            except Exception:
+                pass
+
             textarea_selectors = [
                 "textarea[name*='comment']",
                 "textarea[name*='content']",
@@ -174,46 +200,135 @@ class CommentPoster:
                 ".box-comment textarea",
                 ".comment-box textarea",
                 "div[contenteditable='true']",
-                "textarea"
+                "textarea",
+                "input[placeholder*='viết bình luận' i]",
+                "input[placeholder*='bình luận' i]"
             ]
 
+            target_context = page
             comment_box = None
+
+            # 1. Tìm ô nhập bình luận trực tiếp trước
             for sel in textarea_selectors:
                 elements = page.locator(sel).all()
                 for el in elements:
-                    if el.is_visible():
-                        comment_box = el
-                        break
+                    try:
+                        if el.is_visible():
+                            comment_box = el
+                            break
+                    except Exception:
+                        pass
                 if comment_box:
                     break
 
+            # 2. Nếu chưa thấy ô nhập (nhiều web ẩn form sau nút 'Gửi bình luận' / 'Viết bình luận')
             if not comment_box:
-                result["message"] = "Không tìm thấy khung bình luận trực tiếp (hoặc trang yêu cầu đăng nhập tài khoản / dùng Facebook iframe)."
+                trigger_selectors = [
+                    "button:has-text('Gửi bình luận')",
+                    "div:has-text('Gửi bình luận')",
+                    "a:has-text('Gửi bình luận')",
+                    "span:has-text('Gửi bình luận')",
+                    "button:has-text('Viết bình luận')",
+                    "div:has-text('Viết bình luận')",
+                    "a:has-text('Viết bình luận')",
+                    "span:has-text('Viết bình luận')",
+                    "div[class*='bg-[#FF7E08]']:has-text('bình luận')",
+                    ".btn-comment",
+                    ".btn-write-comment",
+                    "#btn-comment",
+                    "button:has-text('Bình luận')",
+                    "a:has-text('Bình luận')"
+                ]
+
+                for trig_sel in trigger_selectors:
+                    triggers = page.locator(trig_sel).all()
+                    for trig in triggers:
+                        try:
+                            if trig.is_visible():
+                                trig.scroll_into_view_if_needed()
+                                time.sleep(0.4)
+                                clicked = self._safe_click(trig)
+                                if clicked:
+                                    self.log(f"      🔔 Đã bấm nút kích hoạt form bình luận ({trig_sel})", "cyan")
+                                    time.sleep(1.2)
+                                    break
+                        except Exception:
+                            pass
+
+                    # Kiểm tra lại xem textarea đã xuất hiện chưa
+                    for sel2 in textarea_selectors:
+                        elements = page.locator(sel2).all()
+                        for el in elements:
+                            try:
+                                if el.is_visible():
+                                    comment_box = el
+                                    break
+                            except Exception:
+                                pass
+                        if comment_box:
+                            break
+                    if comment_box:
+                        break
+
+            # 3. Quét các Frame phụ (iframe bình luận Facebook, iframe ngoài) nếu trang chính không có
+            if not comment_box:
+                for frame in page.frames:
+                    if frame == page.main_frame:
+                        continue
+                    try:
+                        for sel in textarea_selectors:
+                            elements = frame.locator(sel).all()
+                            for el in elements:
+                                try:
+                                    if el.is_visible():
+                                        comment_box = el
+                                        target_context = frame
+                                        self.log(f"      🖼️ Đã tìm thấy khung bình luận trong iframe!", "cyan")
+                                        break
+                                except Exception:
+                                    pass
+                            if comment_box:
+                                break
+                        if comment_box:
+                            break
+                    except Exception:
+                        pass
+
+            if not comment_box:
+                result["message"] = "Không tìm thấy khung bình luận trực tiếp (hoặc trang web yêu cầu đăng nhập tài khoản / chưa load xong form)."
                 return result
 
-            # Cuộn trang đến khung bình luận mượt mà
-            comment_box.scroll_into_view_if_needed()
-            time.sleep(1.0)
+            # Cuộn mượt mà đến khung bình luận
+            try:
+                comment_box.scroll_into_view_if_needed()
+                time.sleep(0.6)
+            except Exception:
+                pass
 
-            # 2. Tìm và điền ô Tên (Name / Author / Nickname) nếu có
+            # 4. Tìm và điền ô Tên (Author / Nickname / Họ tên) nếu có
             name_selectors = [
                 "input[name*='name']",
                 "input[name*='author']",
                 "input[name*='nickname']",
+                "input[name*='hoten']",
                 "input[id*='author']",
                 "input[id*='name']",
                 "input[placeholder*='tên' i]",
                 "input[placeholder*='name' i]",
-                "input[placeholder*='họ tên' i]"
+                "input[placeholder*='họ tên' i]",
+                "input[placeholder*='người gửi' i]"
             ]
 
             name_input = None
             for sel in name_selectors:
-                elements = page.locator(sel).all()
+                elements = target_context.locator(sel).all()
                 for el in elements:
-                    if el.is_visible():
-                        name_input = el
-                        break
+                    try:
+                        if el.is_visible():
+                            name_input = el
+                            break
+                    except Exception:
+                        pass
                 if name_input:
                     break
 
@@ -221,10 +336,10 @@ class CommentPoster:
                 self._safe_click(name_input)
                 name_input.fill("")
                 for ch in author_name:
-                    name_input.type(ch, delay=random.randint(40, 80))
-                time.sleep(0.5)
+                    name_input.type(ch, delay=random.randint(25, 60))
+                time.sleep(0.4)
 
-            # 3. Tìm và điền ô Gmail / Email nếu có
+            # 5. Tìm và điền ô Gmail / Email nếu có
             if email:
                 email_selectors = [
                     "input[type='email']",
@@ -236,72 +351,89 @@ class CommentPoster:
                     "input[placeholder*='thư điện tử' i]"
                 ]
                 for sel in email_selectors:
-                    el = page.locator(sel).first
-                    if el.count() > 0 and el.is_visible():
-                        self._safe_click(el)
-                        el.fill("")
-                        for ch in email:
-                            el.type(ch, delay=random.randint(25, 60))
-                        time.sleep(0.5)
-                        break
+                    el = target_context.locator(sel).first
+                    try:
+                        if el.count() > 0 and el.is_visible():
+                            self._safe_click(el)
+                            el.fill("")
+                            for ch in email:
+                                el.type(ch, delay=random.randint(20, 50))
+                            time.sleep(0.4)
+                            break
+                    except Exception:
+                        pass
 
-            # 4. Nhập nội dung bình luận vào ô Textarea
+            # 6. Nhập nội dung bình luận vào ô Textarea
             self._safe_click(comment_box)
-            comment_box.fill("")
-            for ch in comment_text:
-                comment_box.type(ch, delay=random.randint(25, 65))
-            time.sleep(1.2)
+            try:
+                comment_box.fill("")
+                comment_box.fill(comment_text)
+            except Exception:
+                for ch in comment_text:
+                    comment_box.type(ch, delay=random.randint(20, 45))
+            time.sleep(1.0)
 
-            # 5. Tự động kiểm tra và giải Math Captcha nếu có trước khi bấm gửi
-            self.solve_math_captcha(page)
+            # 7. Tự động kiểm tra và giải Math Captcha nếu có trước khi bấm gửi
+            self.solve_math_captcha(target_context)
 
-            # 6. Tìm nút Gửi (Submit button)
+            # 8. Tìm nút Gửi (Submit button)
             submit_selectors = [
+                "form button[type='submit']",
+                "form input[type='submit']",
+                "#commentform input[type='submit']",
+                "#commentform button",
+                ".comment-form button[type='submit']",
+                ".comment-form .btn-submit",
                 "button[type='submit']",
                 "input[type='submit']",
                 "button:has-text('Gửi')",
-                "button:has-text('Bình luận')",
+                "button:has-text('Đăng bình luận')",
                 "button:has-text('Đăng')",
-                "button:has-text('Post')",
-                "button:has-text('Comment')",
                 "button:has-text('Submit')",
+                "button:has-text('Post')",
                 ".btn-submit-comment",
-                ".btn-comment",
+                ".btn-comment-submit",
                 "#submit-comment",
                 ".submit-btn"
             ]
 
             submit_btn = None
             for sel in submit_selectors:
-                elements = page.locator(sel).all()
+                elements = target_context.locator(sel).all()
                 for el in elements:
-                    if el.is_visible():
-                        submit_btn = el
-                        break
+                    try:
+                        if el.is_visible():
+                            submit_btn = el
+                            break
+                    except Exception:
+                        pass
                 if submit_btn:
                     break
 
             if submit_btn:
                 self._safe_click(submit_btn)
             else:
-                comment_box.press("Enter")
+                try:
+                    comment_box.press("Control+Enter")
+                except Exception:
+                    comment_box.press("Enter")
 
             time.sleep(2.5)
 
-            # 6. Kiểm tra thông báo phản hồi từ web sau khi gửi
+            # 9. Kiểm tra thông báo phản hồi từ web sau khi gửi
             success_keywords = ["thành công", "cảm ơn", "chờ duyệt", "đã gửi", "success", "submitted"]
-            page_text = page.inner_text("body")[:4000].lower() if page.locator("body").count() > 0 else ""
+            page_text = page.inner_text("body")[:5000].lower() if page.locator("body").count() > 0 else ""
             
             verified = any(kw in page_text for kw in success_keywords) or comment_text.lower() in page_text
 
             result["success"] = True
             result["verified"] = verified
             if verified:
-                result["message"] = "Đã gửi và xác nhận bình luận thành công trên web!"
+                result["message"] = f"Đã gửi và xác nhận bình luận: '{comment_text}'"
             else:
-                result["message"] = "Đã gửi bình luận (hệ thống web đã nhận request)!"
+                result["message"] = f"Đã gửi bình luận: '{comment_text}' (yêu cầu đã được server tiếp nhận)"
 
         except Exception as e:
-            result["message"] = f"Lỗi trong quá trình gửi bình luận: {str(e)[:100]}"
+            result["message"] = f"Lỗi trong quá trình gửi bình luận: {str(e)[:120]}"
 
         return result
