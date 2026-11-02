@@ -16,6 +16,8 @@ Bot tự động hóa tìm kiếm, cào dữ liệu và **bình luận thông mi
 
 ### 2. 🧠 Bình Luận Thông Minh Bằng AI (Google Gemini AI)
 - Tích hợp Gemini AI: Bot tự đọc đoạn tóm tắt nội dung phim (synopsis) và tự động tạo 1 câu nhận xét độc nhất, bàn luận đúng tình tiết/nhân vật trong phim.
+- **Quy tắc 1 bình luận / 1 website:** Bot chỉ bình luận tối đa 1 lần trên mỗi website phim trong phiên chạy, tuyệt đối không spam nhiều lần trên cùng 1 trang.
+- **Ưu tiên phim HOT đầu trang:** Khi vào trang chủ hoặc danh mục của Motchill/Motphim/Phimmoi/Rophim, bot tự động nhận diện và bấm vào phim HOT/nổi bật nhất đầu trang để vào trang chi tiết có khung bình luận.
 - **Tự động chuyển đổi thông minh:** Nếu không điền API key, bot tự động dùng kho mẫu câu cảm nghĩ tiếng Việt tự nhiên đã được làm sạch tên phim.
 
 ### 3. 📱 Gửi Báo Cáo & Ảnh Chụp Tức Thì Về Telegram

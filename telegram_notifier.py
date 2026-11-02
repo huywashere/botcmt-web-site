@@ -44,3 +44,4 @@ class TelegramNotifier:
         except Exception:
             # Fallback nếu gửi ảnh lỗi: gửi tin nhắn text
             return self.send_message(caption)
+

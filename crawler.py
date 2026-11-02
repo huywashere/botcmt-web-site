@@ -40,6 +40,9 @@ class GoogleTopBot:
             use_ai=cmt_cfg.get("use_ai", True)
         )
 
+        # Tập hợp các domain đã bình luận (Đảm bảo: chỉ cmt 1 lần / 1 website)
+        self.commented_domains = set()
+
     def log(self, message: str, style: str = ""):
         if self.console:
             if style:
@@ -290,6 +293,59 @@ class GoogleTopBot:
             self._visit_movie_website(context, link_loc, rank, keyword, title, allowed_domains)
             time.sleep(random.uniform(2.5, 4.0))
 
+    def _get_domain_brand(self, domain_or_url: str, allowed_domains: list) -> str:
+        """Lấy tên thương hiệu của website (motchill, motphim, phimmoi, rophim...)."""
+        text = domain_or_url.lower()
+        for b in allowed_domains:
+            if b.lower() in text:
+                return b.lower()
+        parsed = urlparse(domain_or_url)
+        return parsed.netloc or text
+
+    def _navigate_to_hot_movie(self, page: Page) -> bool:
+        """Tìm và bấm vào phim Hot/đang nổi bật trên trang chủ để bình luận đúng phim."""
+        hot_selectors = [
+            "[class*='hot'] a[href]",
+            "[class*='featured'] a[href]",
+            "[class*='slider'] a[href]",
+            "[class*='trending'] a[href]",
+            ".tray-item a[href]",
+            ".film-item a[href]",
+            ".movie-item a[href]",
+            ".list-film a[href]",
+            ".item a[href*='phim']",
+            "a[href*='/phim/']",
+            "a[href*='/phim-']",
+            "article a[href]"
+        ]
+
+        try:
+            for sel in hot_selectors:
+                links = page.locator(sel).all()
+                for l in links[:15]:
+                    try:
+                        href = l.get_attribute("href")
+                        if not href or href.startswith("#") or href.startswith("javascript:"):
+                            continue
+                        if any(x in href.lower() for x in ["/the-loai/", "/quoc-gia/", "/nam-phat-hanh/", "/dien-vien/", "/dao-dien/"]):
+                            continue
+
+                        if l.is_visible():
+                            movie_title_hint = l.inner_text().strip() or l.get_attribute("title") or "Phim nổi bật"
+                            self.log(f"   🔥 Tự động mở phim Hot/đầu trang chủ: {movie_title_hint[:50]}...", "bold yellow")
+                            l.click(timeout=10000)
+                            try:
+                                page.wait_for_load_state("domcontentloaded", timeout=12000)
+                            except Exception:
+                                pass
+                            time.sleep(2)
+                            return True
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        return False
+
     def _visit_movie_website(self, context: BrowserContext, link_loc, rank: int, keyword: str, preview_title: str, allowed_domains: list):
         behavior_cfg = self.config.get("behavior", {})
         movie_cfg = self.config.get("movie_filter", {})
@@ -302,6 +358,7 @@ class GoogleTopBot:
         take_screenshot = behavior_cfg.get("take_screenshot", True)
         crawl_details = movie_cfg.get("crawl_details", True)
         auto_comment = comment_cfg.get("auto_comment", True)
+        prioritize_hot = comment_cfg.get("prioritize_hot_movies", True)
         excluded_domains = movie_cfg.get("excluded_domains", ["youtube.com", "facebook.com", "tiktok.com", "wikipedia.org"])
 
         new_page = None
@@ -351,6 +408,20 @@ class GoogleTopBot:
                     self.log(f"   ⏩ Bỏ qua: Website {final_url} không thuộc danh sách mục tiêu ({', '.join(allowed_domains)})", "yellow")
                     return
 
+            # Xác định thương hiệu web (motchill, motphim, phimmoi, rophim...)
+            domain_brand = self._get_domain_brand(final_url, allowed_domains)
+            already_commented = domain_brand in self.commented_domains
+
+            # Ưu tiên mở phim Hot/đầu trang nếu đang ở trang chủ hoặc danh mục
+            parsed_path = urlparse(final_url).path.strip("/")
+            is_homepage = parsed_path in ["", "home", "trang-chu", "index.html"]
+            if prioritize_hot and is_homepage and not already_commented:
+                navigated = self._navigate_to_hot_movie(new_page)
+                if navigated:
+                    final_url = new_page.url
+                    final_title = new_page.title()
+                    self.log(f"   🎬 Đã chuyển vào phim Hot: {final_title}", "white")
+
             visited_data["url"] = final_url
             visited_data["title"] = final_title
 
@@ -388,52 +459,59 @@ class GoogleTopBot:
             visited_data["stay_seconds"] = elapsed
             self.log(f"   ⏱️ Đã ở lại web phim {elapsed}s", "green")
 
-            # 7. TỰ ĐỘNG BÌNH LUẬN THÔNG MINH (KẾT HỢP GEMINI AI HOẶC TEMPLATES)
+            # 7. TỰ ĐỘNG BÌNH LUẬN THÔNG MINH (QUY TẮC: CHỈ CMT 1 LẦN / 1 WEBSITE)
             cmt_result = {"success": False, "message": "Chưa bình luận"}
             smart_comment = ""
             author_name = ""
 
             if auto_comment:
-                movie_name = movie_info.get("movie_name", final_title)
-                movie_desc = movie_info.get("description", "")
-                custom_name = comment_cfg.get("custom_name")
-                author_name = custom_name if custom_name else self.comment_gen.generate_nickname()
-                author_email = self.comment_gen.generate_email(author_name)
-                custom_templates = comment_cfg.get("custom_templates", [])
-
-                # Tạo bình luận (AI hoặc Template)
-                smart_comment, cmt_source = self.comment_gen.generate_comment(
-                    movie_name=movie_name,
-                    description=movie_desc,
-                    custom_templates=custom_templates
-                )
-
-                self.log(f"   💬 [Tự động bình luận] Nguồn: [{cmt_source}]", "cyan")
-                self.log(f"      • Người gửi: [bold]{author_name}[/bold]", "white")
-                self.log(f"      • Nội dung: [italic yellow]\"{smart_comment}\"[/italic yellow]", "white")
-
-                cmt_result = self.comment_poster.post_comment(
-                    page=new_page,
-                    comment_text=smart_comment,
-                    author_name=author_name,
-                    email=author_email
-                )
-
-                if cmt_result.get("success"):
-                    self.log(f"      ✅ {cmt_result.get('message')}", "bold green")
+                if already_commented:
+                    self.log(f"   🔒 Website [{domain_brand.upper()}] đã được bình luận trong phiên này (quy tắc: 1 cmt / 1 web). Bỏ qua bình luận!", "yellow")
                 else:
-                    self.log(f"      ℹ️ {cmt_result.get('message')}", "dim")
+                    movie_name = movie_info.get("movie_name", final_title)
+                    movie_desc = movie_info.get("description", "")
+                    custom_name = comment_cfg.get("custom_name")
+                    author_name = custom_name if custom_name else self.comment_gen.generate_nickname()
+                    author_email = self.comment_gen.generate_email(author_name)
+                    custom_templates = comment_cfg.get("custom_templates", [])
 
-                self.exporter.save_comment_log({
-                    "keyword": keyword,
-                    "movie_name": movie_name,
-                    "url": final_url,
-                    "author": author_name,
-                    "comment_text": smart_comment,
-                    "source": cmt_source,
-                    "success": cmt_result.get("success"),
-                    "message": cmt_result.get("message")
-                })
+                    # Tạo bình luận (AI hoặc Template)
+                    smart_comment, cmt_source = self.comment_gen.generate_comment(
+                        movie_name=movie_name,
+                        description=movie_desc,
+                        custom_templates=custom_templates
+                    )
+
+                    self.log(f"   💬 [Tự động bình luận] Nguồn: [{cmt_source}]", "cyan")
+                    self.log(f"      • Người gửi: [bold]{author_name}[/bold]", "white")
+                    self.log(f"      • Nội dung: [italic yellow]\"{smart_comment}\"[/italic yellow]", "white")
+
+                    cmt_result = self.comment_poster.post_comment(
+                        page=new_page,
+                        comment_text=smart_comment,
+                        author_name=author_name,
+                        email=author_email
+                    )
+
+                    if cmt_result.get("success"):
+                        self.log(f"      ✅ {cmt_result.get('message')}", "bold green")
+                    else:
+                        self.log(f"      ℹ️ {cmt_result.get('message')}", "dim")
+
+                    # Ghi nhận domain này đã được bình luận (Không bình luận trùng)
+                    self.commented_domains.add(domain_brand)
+                    self.log(f"   🔒 Đã hoàn thành bình luận trên [{domain_brand.upper()}]. Sẽ không bình luận trùng!", "bold green")
+
+                    self.exporter.save_comment_log({
+                        "keyword": keyword,
+                        "movie_name": movie_name,
+                        "url": final_url,
+                        "author": author_name,
+                        "comment_text": smart_comment,
+                        "source": cmt_source,
+                        "success": cmt_result.get("success"),
+                        "message": cmt_result.get("message")
+                    })
 
             # Chụp ảnh màn hình lưu bằng chứng
             screenshot_path = ""

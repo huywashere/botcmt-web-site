@@ -228,6 +228,7 @@ def main():
     if config["comment"]["auto_comment"]:
         ai_status = "Bật (Ưu tiên Gemini AI khi có key)" if config["comment"].get("use_ai") else "Chỉ dùng Template thông minh"
         table.add_row("Chế độ soạn bình luận", ai_status)
+        table.add_row("Quy tắc bình luận", "Chỉ 1 cmt / 1 website (Ưu tiên phim HOT đầu trang)")
 
     # Proxy
     proxy_status = f"Đang BẬT ({config['proxy'].get('server')})" if config["proxy"].get("enabled") and config["proxy"].get("server") else "Không dùng Proxy (IP trực tiếp)"
