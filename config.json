@@ -1,0 +1,67 @@
+{
+  "search": {
+    "keywords": [
+      "xem phim motchill vietsub",
+      "phim mới motphim",
+      "phim chiếu rạp phimmoi",
+      "xem phim rophim",
+      "top phim hay motchill motphim phimmoi rophim"
+    ],
+    "keywords_file": "keywords.txt",
+    "top_limit": 3,
+    "google_domain": "https://www.google.com"
+  },
+  "movie_filter": {
+    "only_movie_sites": true,
+    "allowed_domains": [
+      "motchill",
+      "motphim",
+      "phimmoi",
+      "rophim"
+    ],
+    "keywords_matching": [
+      "motchill",
+      "motphim",
+      "phimmoi",
+      "rophim"
+    ],
+    "excluded_domains": [
+      "facebook.com",
+      "youtube.com",
+      "tiktok.com",
+      "wikipedia.org",
+      "shopee.vn",
+      "lazada.vn",
+      "tiki.vn"
+    ],
+    "crawl_details": true,
+    "crawl_comments": true
+  },
+  "comment": {
+    "auto_comment": true,
+    "custom_name": "",
+    "custom_templates": [
+      "Phim {movie_name} xem cuốn quá, diễn xuất đỉnh thực sự!",
+      "Vừa xem xong {movie_name}, kịch bản bất ngờ phút cuối ghê.",
+      "Bản vietsub của {movie_name} nét căng, cảm ơn web đã cập nhật nhanh nhé!"
+    ]
+  },
+  "browser": {
+    "headless": false,
+    "slow_mo_ms": 30,
+    "window_width": 1280,
+    "window_height": 800
+  },
+  "behavior": {
+    "min_stay_seconds": 6,
+    "max_stay_seconds": 12,
+    "scroll_page": true,
+    "visit_internal_link": true,
+    "take_screenshot": true
+  },
+  "output": {
+    "save_json": true,
+    "save_csv": true,
+    "output_dir": "output"
+  }
+}
