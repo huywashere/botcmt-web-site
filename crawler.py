@@ -660,8 +660,8 @@ class GoogleTopBot:
             const seen = new Set();
             const ignores = ['the-loai', 'quoc-gia', 'nam-phat-hanh', 'dien-vien', 'dao-dien', 'tin-tuc', 'faq', 'contact', 'login', 'register', 'privacy', 'danh-sach'];
 
-            // Lấy toàn bộ các thẻ link phim
-            const allLinks = document.querySelectorAll('a[href*="/phim/"], a[href*="/phim-"], .movie-card a[href], .film-item a[href], .tray-item a[href]');
+            // Lấy toàn bộ các thẻ link phim (tương thích Motchill, Rophim, Phimmoi, Motphim)
+            const allLinks = document.querySelectorAll('a[href*="/phim/"], a[href*="/phim-"], a[href*="/xem-phim/"], a[href*="/xem-phim-"], a[href*="/movie/"], a[href*="/watch/"], .movie-card a[href], .film-item a[href], .tray-item a[href], .halim-item a[href], .item-film a[href], .public-film-item a[href], a.film-item, a[class*="item"]');
             
             for (const a of allLinks) {
                 const href = a.href;

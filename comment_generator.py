@@ -53,7 +53,7 @@ class CommentGenerator:
         for part in parts:
             p_strip = part.strip()
             # Bỏ qua các phần chỉ là tên web hoặc khẩu hiệu web
-            if re.search(r'^(Motchill|Motphim|PhimMoi|RoPhim|VieON|Galaxy\s*Play|Xem\s*Phim|Phim\s*Mới)$', p_strip, re.IGNORECASE):
+            if re.search(r'^(Motchill|Motphim|PhimMoi|RoPhim|PhimChill|TvHay|SubNhanh|VieON|Galaxy\s*Play|Xem\s*Phim|Phim\s*Mới)$', p_strip, re.IGNORECASE):
                 continue
             if len(p_strip) > 0:
                 meaningful_parts.append(p_strip)
