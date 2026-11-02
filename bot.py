@@ -136,6 +136,7 @@ def main():
     parser.add_argument("-f", "--file", type=str, help="File danh sách từ khóa")
     parser.add_argument("-t", "--top", type=int, help="Số lượng top web phim cần cào/bình luận")
     parser.add_argument("--author", type=str, help="Tên người bình luận")
+    parser.add_argument("--cmts-per-web", type=int, help="Số lượng phim Hot muốn bình luận trên mỗi website (mặc định: 3)")
     parser.add_argument("--comment", action="store_true", help="Bật tính năng tự động bình luận")
     parser.add_argument("--no-comment", action="store_true", help="Tắt tính năng tự động bình luận")
     parser.add_argument("--headless", action="store_true", help="Chạy ngầm không hiện trình duyệt")
@@ -159,6 +160,9 @@ def main():
 
     if args.author:
         config["comment"]["custom_name"] = args.author
+
+    if args.cmts_per_web:
+        config["comment"]["comments_per_website"] = args.cmts_per_web
 
     if args.comment:
         config["comment"]["auto_comment"] = True
@@ -228,7 +232,8 @@ def main():
     if config["comment"]["auto_comment"]:
         ai_status = "Bật (Ưu tiên Gemini AI khi có key)" if config["comment"].get("use_ai") else "Chỉ dùng Template thông minh"
         table.add_row("Chế độ soạn bình luận", ai_status)
-        table.add_row("Quy tắc bình luận", "Chỉ 1 cmt / 1 website (Ưu tiên phim HOT đầu trang)")
+        cmts_count = config["comment"].get("comments_per_website", 3)
+        table.add_row("Số phim Hot cmt mỗi web", f"{cmts_count} phim Hot / 1 website")
 
     # Proxy
     proxy_status = f"Đang BẬT ({config['proxy'].get('server')})" if config["proxy"].get("enabled") and config["proxy"].get("server") else "Không dùng Proxy (IP trực tiếp)"

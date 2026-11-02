@@ -302,76 +302,61 @@ class GoogleTopBot:
         parsed = urlparse(domain_or_url)
         return parsed.netloc or text
 
-    def _navigate_to_hot_movie(self, page: Page) -> bool:
-        """Tìm và bấm vào phim Hot/đang nổi bật trên trang chủ để bình luận đúng phim."""
-        hot_selectors = [
-            "[class*='hot'] a[href]",
-            "[class*='featured'] a[href]",
-            "[class*='slider'] a[href]",
-            "[class*='trending'] a[href]",
-            ".tray-item a[href]",
-            ".film-item a[href]",
-            ".movie-item a[href]",
-            ".list-film a[href]",
-            ".item a[href*='phim']",
-            "a[href*='/phim/']",
-            "a[href*='/phim-']",
-            "article a[href]"
-        ]
+    def _extract_hot_movie_links(self, page: Page, limit: int = 3) -> list:
+        """Trích xuất danh sách các phim Hot/nổi bật nhất trên trang chủ hoặc trang danh mục."""
+        js_code = """
+        () => {
+            const selectors = [
+                "[class*='hot'] a[href]",
+                "[class*='featured'] a[href]",
+                "[class*='slider'] a[href]",
+                "[class*='trending'] a[href]",
+                ".tray-item a[href]",
+                ".film-item a[href]",
+                ".movie-item a[href]",
+                ".list-film a[href]",
+                "a[href*='/phim/']",
+                "a[href*='/phim-']",
+                ".item a[href]"
+            ];
+            const seen = new Set();
+            const results = [];
+            const ignores = ['the-loai', 'quoc-gia', 'nam-phat-hanh', 'dien-vien', 'dao-dien', 'tin-tuc', 'faq', 'contact', 'login', 'register'];
 
+            for (const sel of selectors) {
+                const links = document.querySelectorAll(sel);
+                for (const a of links) {
+                    const href = a.href;
+                    if (!href || seen.has(href)) continue;
+                    if (href.startsWith('javascript:') || href.includes('#')) continue;
+                    if (ignores.some(ig => href.toLowerCase().includes(ig))) continue;
+
+                    const text = a.innerText ? a.innerText.trim() : (a.title ? a.title.trim() : "");
+                    seen.add(href);
+                    results.push({ url: href, title: text });
+                    if (results.length >= 15) break;
+                }
+                if (results.length >= 15) break;
+            }
+            return results;
+        }
+        """
         try:
-            for sel in hot_selectors:
-                links = page.locator(sel).all()
-                for l in links[:15]:
-                    try:
-                        href = l.get_attribute("href")
-                        if not href or href.startswith("#") or href.startswith("javascript:"):
-                            continue
-                        if any(x in href.lower() for x in ["/the-loai/", "/quoc-gia/", "/nam-phat-hanh/", "/dien-vien/", "/dao-dien/"]):
-                            continue
-
-                        if l.is_visible():
-                            movie_title_hint = l.inner_text().strip() or l.get_attribute("title") or "Phim nổi bật"
-                            self.log(f"   🔥 Tự động mở phim Hot/đầu trang chủ: {movie_title_hint[:50]}...", "bold yellow")
-                            l.click(timeout=10000)
-                            try:
-                                page.wait_for_load_state("domcontentloaded", timeout=12000)
-                            except Exception:
-                                pass
-                            time.sleep(2)
-                            return True
-                    except Exception:
-                        continue
+            links = page.evaluate(js_code)
+            return links[:limit] if links else []
         except Exception:
-            pass
-        return False
+            return []
 
     def _visit_movie_website(self, context: BrowserContext, link_loc, rank: int, keyword: str, preview_title: str, allowed_domains: list):
-        behavior_cfg = self.config.get("behavior", {})
         movie_cfg = self.config.get("movie_filter", {})
         comment_cfg = self.config.get("comment", {})
 
-        min_stay = behavior_cfg.get("min_stay_seconds", 6)
-        max_stay = behavior_cfg.get("max_stay_seconds", 12)
-        should_scroll = behavior_cfg.get("scroll_page", True)
-        visit_internal = behavior_cfg.get("visit_internal_link", False)
-        take_screenshot = behavior_cfg.get("take_screenshot", True)
-        crawl_details = movie_cfg.get("crawl_details", True)
         auto_comment = comment_cfg.get("auto_comment", True)
         prioritize_hot = comment_cfg.get("prioritize_hot_movies", True)
+        comments_per_web = comment_cfg.get("comments_per_website", 3)
         excluded_domains = movie_cfg.get("excluded_domains", ["youtube.com", "facebook.com", "tiktok.com", "wikipedia.org"])
 
         new_page = None
-        visited_data = {
-            "keyword": keyword,
-            "rank": rank,
-            "title": preview_title,
-            "url": "",
-            "stay_seconds": 0,
-            "internal_visited": False,
-            "screenshot": "",
-            "status": "SUCCESS"
-        }
 
         try:
             with context.expect_page(timeout=20000) as new_page_info:
@@ -392,160 +377,72 @@ class GoogleTopBot:
                 pass
 
             time.sleep(1.5)
-            final_url = new_page.url
-            final_title = new_page.title() or preview_title
+            landing_url = new_page.url
+            landing_title = new_page.title() or preview_title
 
             # Kiểm tra domain loại trừ
             for exc in excluded_domains:
-                if exc.lower() in final_url.lower():
+                if exc.lower() in landing_url.lower():
                     self.log(f"   ⏩ Bỏ qua vì chuyển hướng vào domain loại trừ: {exc}", "yellow")
                     return
 
             # Kiểm tra xem website thật sự có thuộc danh sách allowed_domains không
             if allowed_domains and len(allowed_domains) > 0:
-                is_match = any(d.lower() in final_url.lower() or d.lower() in final_title.lower() for d in allowed_domains)
+                is_match = any(d.lower() in landing_url.lower() or d.lower() in landing_title.lower() for d in allowed_domains)
                 if not is_match:
-                    self.log(f"   ⏩ Bỏ qua: Website {final_url} không thuộc danh sách mục tiêu ({', '.join(allowed_domains)})", "yellow")
+                    self.log(f"   ⏩ Bỏ qua: Website {landing_url} không thuộc danh sách mục tiêu ({', '.join(allowed_domains)})", "yellow")
                     return
 
-            # Xác định thương hiệu web (motchill, motphim, phimmoi, rophim...)
-            domain_brand = self._get_domain_brand(final_url, allowed_domains)
-            already_commented = domain_brand in self.commented_domains
+            domain_brand = self._get_domain_brand(landing_url, allowed_domains)
+            self.log(f"   🌐 Đang mở hệ thống web: [bold cyan]{domain_brand.upper()}[/bold cyan] ({landing_url})", "blue")
 
-            # Ưu tiên mở phim Hot/đầu trang nếu đang ở trang chủ hoặc danh mục
-            parsed_path = urlparse(final_url).path.strip("/")
-            is_homepage = parsed_path in ["", "home", "trang-chu", "index.html"]
-            if prioritize_hot and is_homepage and not already_commented:
-                navigated = self._navigate_to_hot_movie(new_page)
-                if navigated:
-                    final_url = new_page.url
-                    final_title = new_page.title()
-                    self.log(f"   🎬 Đã chuyển vào phim Hot: {final_title}", "white")
+            # Tìm danh sách phim Hot trên web này để bình luận nhiều lần
+            hot_movies = []
+            if prioritize_hot and auto_comment:
+                hot_movies = self._extract_hot_movie_links(new_page, limit=comments_per_web)
 
-            visited_data["url"] = final_url
-            visited_data["title"] = final_title
+            if hot_movies and len(hot_movies) > 0:
+                self.log(f"   🔥 Tìm thấy {len(hot_movies)} phim Hot/nổi bật trên [{domain_brand.upper()}]. Bắt đầu cào & bình luận từng phim:", "bold yellow")
+                for sub_idx, hot_m in enumerate(hot_movies, 1):
+                    target_movie_url = hot_m.get("url")
+                    target_movie_title = hot_m.get("title") or f"Phim Hot #{sub_idx}"
 
-            self.log(f"   🌐 Website: {final_url}", "blue")
-            self.log(f"   📄 Tiêu đề: {final_title}", "white")
+                    self.log(f"\n   👉 [{domain_brand.upper()} - Phim Hot {sub_idx}/{len(hot_movies)}] {target_movie_title}", "cyan")
+                    try:
+                        new_page.goto(target_movie_url, wait_until="domcontentloaded", timeout=20000)
+                        time.sleep(1.5)
+                    except Exception as e:
+                        self.log(f"      ⚠️ Không thể tải phim này: {e}", "dim")
+                        continue
 
-            movie_info = {}
-            if crawl_details:
-                movie_info = MovieExtractor.extract_movie_info(new_page)
-                movie_info["keyword"] = keyword
-                movie_info["rank"] = rank
-                movie_info["url"] = final_url
-                if not movie_info["movie_name"]:
-                    movie_info["movie_name"] = final_title
-
-                cmts = movie_info.get("comments", [])
-                self.log(f"   🎬 Tên phim cào được: {movie_info['movie_name']}", "bold magenta")
-                if movie_info.get("year"):
-                    self.log(f"   📅 Năm phát hành: {movie_info['year']}", "magenta")
-                if cmts:
-                    self.log(f"   💬 Cào được {len(cmts)} bình luận cũ (Ví dụ: '{cmts[0][:60]}...')", "green")
-
-                self.exporter.save_movie_data(movie_info)
-
-            # Mô phỏng cuộn chuột và đọc nội dung
-            start_time = time.time()
-            stay_duration = random.uniform(min_stay, max_stay)
-
-            if should_scroll:
-                self._simulate_reading(new_page, stay_duration)
-            else:
-                time.sleep(stay_duration)
-
-            elapsed = round(time.time() - start_time, 1)
-            visited_data["stay_seconds"] = elapsed
-            self.log(f"   ⏱️ Đã ở lại web phim {elapsed}s", "green")
-
-            # 7. TỰ ĐỘNG BÌNH LUẬN THÔNG MINH (QUY TẮC: CHỈ CMT 1 LẦN / 1 WEBSITE)
-            cmt_result = {"success": False, "message": "Chưa bình luận"}
-            smart_comment = ""
-            author_name = ""
-
-            if auto_comment:
-                if already_commented:
-                    self.log(f"   🔒 Website [{domain_brand.upper()}] đã được bình luận trong phiên này (quy tắc: 1 cmt / 1 web). Bỏ qua bình luận!", "yellow")
-                else:
-                    movie_name = movie_info.get("movie_name", final_title)
-                    movie_desc = movie_info.get("description", "")
-                    custom_name = comment_cfg.get("custom_name")
-                    author_name = custom_name if custom_name else self.comment_gen.generate_nickname()
-                    author_email = self.comment_gen.generate_email(author_name)
-                    custom_templates = comment_cfg.get("custom_templates", [])
-
-                    # Tạo bình luận (AI hoặc Template)
-                    smart_comment, cmt_source = self.comment_gen.generate_comment(
-                        movie_name=movie_name,
-                        description=movie_desc,
-                        custom_templates=custom_templates
-                    )
-
-                    self.log(f"   💬 [Tự động bình luận] Nguồn: [{cmt_source}]", "cyan")
-                    self.log(f"      • Người gửi: [bold]{author_name}[/bold]", "white")
-                    self.log(f"      • Nội dung: [italic yellow]\"{smart_comment}\"[/italic yellow]", "white")
-
-                    cmt_result = self.comment_poster.post_comment(
+                    self._process_single_movie_page(
                         page=new_page,
-                        comment_text=smart_comment,
-                        author_name=author_name,
-                        email=author_email
+                        movie_url=new_page.url,
+                        preview_title=target_movie_title,
+                        keyword=keyword,
+                        rank=rank,
+                        sub_rank=sub_idx,
+                        domain_brand=domain_brand
                     )
 
-                    if cmt_result.get("success"):
-                        self.log(f"      ✅ {cmt_result.get('message')}", "bold green")
-                    else:
-                        self.log(f"      ℹ️ {cmt_result.get('message')}", "dim")
-
-                    # Ghi nhận domain này đã được bình luận (Không bình luận trùng)
-                    self.commented_domains.add(domain_brand)
-                    self.log(f"   🔒 Đã hoàn thành bình luận trên [{domain_brand.upper()}]. Sẽ không bình luận trùng!", "bold green")
-
-                    self.exporter.save_comment_log({
-                        "keyword": keyword,
-                        "movie_name": movie_name,
-                        "url": final_url,
-                        "author": author_name,
-                        "comment_text": smart_comment,
-                        "source": cmt_source,
-                        "success": cmt_result.get("success"),
-                        "message": cmt_result.get("message")
-                    })
-
-            # Chụp ảnh màn hình lưu bằng chứng
-            screenshot_path = ""
-            if take_screenshot:
-                screenshot_path = self._take_screenshot(new_page, keyword, rank, final_url)
-                visited_data["screenshot"] = screenshot_path
-
-            # Gửi thông báo về Telegram nếu có bật
-            if self.notifier.enabled:
-                movie_name = movie_info.get("movie_name", final_title)
-                status_icon = "✅ Thành công" if cmt_result.get("success") else "ℹ️ Đã xem"
-                tg_caption = (
-                    f"🎬 *BOT CÀO PHIM & BÌNH LUẬN*\n"
-                    f"🍿 *Phim:* {movie_name}\n"
-                    f"🌐 *Website:* {final_url[:70]}\n"
-                    f"👤 *Tác giả:* {author_name or 'Ẩn danh'}\n"
-                    f"💬 *Bình luận:* \"{smart_comment}\"\n"
-                    f"📊 *Trạng thái:* {status_icon}\n"
-                    f"⏱️ *Thời gian xem:* {elapsed}s"
+                    if sub_idx < len(hot_movies):
+                        pause = random.randint(3, 6)
+                        self.log(f"      ⏳ Nghỉ {pause}s trước khi bình luận phim Hot tiếp theo...", "dim")
+                        time.sleep(pause)
+            else:
+                # Trang hiện tại đã là trang chi tiết 1 bộ phim
+                self._process_single_movie_page(
+                    page=new_page,
+                    movie_url=landing_url,
+                    preview_title=landing_title,
+                    keyword=keyword,
+                    rank=rank,
+                    sub_rank=1,
+                    domain_brand=domain_brand
                 )
-                if screenshot_path and os.path.exists(screenshot_path):
-                    self.notifier.send_photo(screenshot_path, tg_caption)
-                else:
-                    self.notifier.send_message(tg_caption)
-                self.log("   📱 Đã gửi báo cáo tiến độ về Telegram!", "cyan")
-
-            # Duyệt tập/link nội bộ nếu bật
-            if visit_internal:
-                internal_clicked = self._visit_internal_page(new_page, final_url)
-                visited_data["internal_visited"] = internal_clicked
 
         except Exception as e:
-            visited_data["status"] = f"ERROR: {str(e)[:100]}"
-            self.log(f"   ❌ Có lỗi khi cào trang này: {e}", "red")
+            self.log(f"   ❌ Có lỗi khi duyệt web này: {e}", "red")
         finally:
             if new_page:
                 try:
@@ -553,8 +450,131 @@ class GoogleTopBot:
                 except Exception:
                     pass
 
-            self.exporter.save_visit(visited_data)
-            self.log(f"   💾 Đã lưu dữ liệu cào Top {rank} vào CSV & JSON\n", "dim")
+    def _process_single_movie_page(self, page: Page, movie_url: str, preview_title: str, keyword: str, rank: int, sub_rank: int, domain_brand: str):
+        behavior_cfg = self.config.get("behavior", {})
+        movie_cfg = self.config.get("movie_filter", {})
+        comment_cfg = self.config.get("comment", {})
+
+        min_stay = behavior_cfg.get("min_stay_seconds", 6)
+        max_stay = behavior_cfg.get("max_stay_seconds", 12)
+        should_scroll = behavior_cfg.get("scroll_page", True)
+        take_screenshot = behavior_cfg.get("take_screenshot", True)
+        crawl_details = movie_cfg.get("crawl_details", True)
+        auto_comment = comment_cfg.get("auto_comment", True)
+
+        current_url = page.url
+        current_title = page.title() or preview_title
+
+        movie_info = {}
+        if crawl_details:
+            movie_info = MovieExtractor.extract_movie_info(page)
+            movie_info["keyword"] = keyword
+            movie_info["rank"] = f"{rank}.{sub_rank}"
+            movie_info["url"] = current_url
+            if not movie_info["movie_name"]:
+                movie_info["movie_name"] = current_title
+
+            cmts = movie_info.get("comments", [])
+            self.log(f"      🎬 Tên phim: {movie_info['movie_name']}", "bold magenta")
+            if movie_info.get("year"):
+                self.log(f"      📅 Năm phát hành: {movie_info['year']}", "magenta")
+            if cmts:
+                self.log(f"      💬 Có {len(cmts)} bình luận cũ (Ví dụ: '{cmts[0][:50]}...')", "dim")
+
+            self.exporter.save_movie_data(movie_info)
+
+        # Mô phỏng cuộn chuột đọc nội dung
+        start_time = time.time()
+        stay_duration = random.uniform(min_stay, max_stay)
+        if should_scroll:
+            self._simulate_reading(page, stay_duration)
+        else:
+            time.sleep(stay_duration)
+
+        elapsed = round(time.time() - start_time, 1)
+        self.log(f"      ⏱️ Đã xem trang {elapsed}s", "green")
+
+        # Tự động gửi bình luận
+        cmt_result = {"success": False, "message": "Chưa bình luận"}
+        smart_comment = ""
+        author_name = ""
+
+        if auto_comment:
+            movie_name = movie_info.get("movie_name", current_title)
+            movie_desc = movie_info.get("description", "")
+            custom_name = comment_cfg.get("custom_name")
+            author_name = custom_name if custom_name else self.comment_gen.generate_nickname()
+            author_email = self.comment_gen.generate_email(author_name)
+            custom_templates = comment_cfg.get("custom_templates", [])
+
+            smart_comment, cmt_source = self.comment_gen.generate_comment(
+                movie_name=movie_name,
+                description=movie_desc,
+                custom_templates=custom_templates
+            )
+
+            self.log(f"      💬 [Gửi bình luận] Nguồn: [{cmt_source}]", "cyan")
+            self.log(f"         • Người gửi: [bold]{author_name}[/bold]", "white")
+            self.log(f"         • Nội dung: [italic yellow]\"{smart_comment}\"[/italic yellow]", "white")
+
+            cmt_result = self.comment_poster.post_comment(
+                page=page,
+                comment_text=smart_comment,
+                author_name=author_name,
+                email=author_email
+            )
+
+            if cmt_result.get("success"):
+                self.log(f"         ✅ {cmt_result.get('message')}", "bold green")
+            else:
+                self.log(f"         ℹ️ {cmt_result.get('message')}", "dim")
+
+            self.exporter.save_comment_log({
+                "keyword": keyword,
+                "movie_name": movie_name,
+                "url": current_url,
+                "author": author_name,
+                "comment_text": smart_comment,
+                "source": cmt_source,
+                "success": cmt_result.get("success"),
+                "message": cmt_result.get("message")
+            })
+
+        # Chụp ảnh màn hình lưu bằng chứng
+        screenshot_path = ""
+        if take_screenshot:
+            screenshot_path = self._take_screenshot(page, keyword, f"{rank}_{sub_rank}", current_url)
+
+        # Lưu lịch sử truy cập
+        self.exporter.save_visit({
+            "keyword": keyword,
+            "rank": f"{rank}.{sub_rank}",
+            "title": current_title,
+            "url": current_url,
+            "stay_seconds": elapsed,
+            "internal_visited": False,
+            "screenshot": screenshot_path,
+            "status": "SUCCESS"
+        })
+
+        # Gửi thông báo Telegram nếu bật
+        if self.notifier.enabled:
+            movie_name = movie_info.get("movie_name", current_title)
+            status_icon = "✅ Đã bình luận" if cmt_result.get("success") else "ℹ️ Đã xem"
+            tg_caption = (
+                f"🎬 *BOT CÀO PHIM & BÌNH LUẬN*\n"
+                f"🍿 *Phim:* {movie_name}\n"
+                f"🌐 *Website:* [{domain_brand.upper()}] {current_url[:60]}\n"
+                f"👤 *Tác giả:* {author_name or 'Ẩn danh'}\n"
+                f"💬 *Bình luận:* \"{smart_comment}\"\n"
+                f"📊 *Trạng thái:* {status_icon}\n"
+                f"⏱️ *Thời gian xem:* {elapsed}s"
+            )
+            if screenshot_path and os.path.exists(screenshot_path):
+                self.notifier.send_photo(screenshot_path, tg_caption)
+            else:
+                self.notifier.send_message(tg_caption)
+            self.log("      📱 Đã gửi báo cáo Telegram!", "cyan")
 
     def _simulate_reading(self, page: Page, total_duration: float):
         self.log("   📜 Đang cuộn trang xem danh sách phim / bài viết...", "dim")

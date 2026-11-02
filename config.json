@@ -39,7 +39,7 @@
   },
   "comment": {
     "auto_comment": true,
-    "max_comments_per_website": 1,
+    "comments_per_website": 3,
     "prioritize_hot_movies": true,
     "use_ai": true,
     "gemini_api_key": "",

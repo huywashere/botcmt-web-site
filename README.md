@@ -14,10 +14,9 @@ Bot tự động hóa tìm kiếm, cào dữ liệu và **bình luận thông mi
 - Tự động lưu cookie, lịch sử và trạng thái đăng nhập vào thư mục `user_profile/`.
 - Bạn chỉ cần đăng nhập tài khoản web phim hoặc Facebook **1 lần duy nhất**, các lần chạy sau bot sẽ tự động giữ phiên đăng nhập và bình luận được mọi khung chat.
 
-### 2. 🧠 Bình Luận Thông Minh Bằng AI (Google Gemini AI)
-- Tích hợp Gemini AI: Bot tự đọc đoạn tóm tắt nội dung phim (synopsis) và tự động tạo 1 câu nhận xét độc nhất, bàn luận đúng tình tiết/nhân vật trong phim.
-- **Quy tắc 1 bình luận / 1 website:** Bot chỉ bình luận tối đa 1 lần trên mỗi website phim trong phiên chạy, tuyệt đối không spam nhiều lần trên cùng 1 trang.
-- **Ưu tiên phim HOT đầu trang:** Khi vào trang chủ hoặc danh mục của Motchill/Motphim/Phimmoi/Rophim, bot tự động nhận diện và bấm vào phim HOT/nổi bật nhất đầu trang để vào trang chi tiết có khung bình luận.
+### 2. 🧠 Bình Luận Thông Minh Bằng AI & Bình Luận Hàng Loạt Phim HOT
+- **Bình luận nhiều phim HOT trên mỗi website:** Khi mở một trang web phim (*Motchill, Motphim, Phimmoi, Rophim*), bot tự động quét và cào lần lượt **Top 3 (hoặc 5) phim HOT nhất** trên trang chủ của web đó, vào chi tiết từng phim và để lại bình luận.
+- **Tự động đổi danh tính (Anti-Spam):** Mỗi phim được bình luận bằng một Nickname ngẫu nhiên khác nhau và một nội dung nhận xét độc nhất (hoặc sinh bởi Gemini AI theo đúng tóm tắt phim).
 - **Tự động chuyển đổi thông minh:** Nếu không điền API key, bot tự động dùng kho mẫu câu cảm nghĩ tiếng Việt tự nhiên đã được làm sạch tên phim.
 
 ### 3. 📱 Gửi Báo Cáo & Ảnh Chụp Tức Thì Về Telegram
@@ -70,12 +69,17 @@ Bấm đúp chuột vào file **[`run.bat`](file:///c:/auto-crawl-bot-cmt-web/ru
 python bot.py --visible
 ```
 
-#### B. Chạy hẹn giờ lặp lại (Ví dụ: Cứ 60 phút chạy 1 lần):
+#### B. Chạy bình luận nhiều phim HOT trên mỗi web (Ví dụ: 3 phim / 1 web):
+```powershell
+python bot.py --cmts-per-web 3 --visible
+```
+
+#### C. Chạy hẹn giờ lặp lại (Ví dụ: Cứ 60 phút chạy 1 lần):
 ```powershell
 python bot.py -i 60 --visible
 ```
 
-#### C. Chạy bình luận với Gemini AI:
+#### D. Chạy bình luận với Gemini AI:
 ```powershell
 python bot.py --ai-key "AIzaSy..." --visible
 ```
