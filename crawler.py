@@ -948,7 +948,7 @@ class GoogleTopBot:
             for cmt_round in range(1, comments_count + 1):
                 custom_name = comment_cfg.get("custom_name")
                 custom_email = comment_cfg.get("custom_email")
-                author_name = custom_name if custom_name else self.comment_gen.generate_nickname()
+                author_name = custom_name if custom_name else "flexphim.top"
                 author_email = custom_email if custom_email else self.comment_gen.generate_email(author_name)
                 round_label = f"[{cmt_round}/{comments_count}] " if comments_count > 1 else ""
 

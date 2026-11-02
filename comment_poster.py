@@ -5,14 +5,14 @@ from playwright.sync_api import Page
 from cloudflare_handler import CloudflareHandler
 
 class CommentPoster:
-    """Tự động phân tích sâu DOM, vượt bảo vệ Cloudflare/Turnstile, điền Tên, Gmail, giải Captcha và gửi bình luận (Spam CMT)."""
+    """Tự động phân tích sâu DOM, xử lý Cloudflare/Turnstile trong form, điền Tên (flexphim.top), Nội dung và gửi bình luận."""
 
     def __init__(self, log_fn=None):
         self.log = log_fn if log_fn else print
 
     @staticmethod
     def _safe_click(element, delay=0):
-        """Click an toàn: Tự động dùng force=True hoặc dispatch_event nếu bị banner quảng cáo che khuất."""
+        """Click an toàn: Tự động dùng force=True hoặc dispatch_event nếu bị che khuất."""
         try:
             element.click(timeout=2500, delay=delay)
             return True
@@ -101,6 +101,87 @@ class CommentPoster:
             pass
         return False
 
+    def solve_form_turnstile(self, page_or_frame) -> bool:
+        """
+        Tự động phát hiện và giải quyết widget Cloudflare Turnstile nhúng trong form bình luận:
+        1. Kiểm tra iframe Turnstile (challenges.cloudflare.com) hoặc input token.
+        2. Tự động click vào checkbox xác minh nếu chưa hoàn tất.
+        3. Đợi trạng thái 'Thành công!' / 'Success!' xuất hiện trước khi cho phép bấm gửi.
+        """
+        try:
+            has_turnstile = page_or_frame.evaluate("""() => {
+                return Boolean(
+                    document.querySelector('.cf-turnstile') ||
+                    document.querySelector('#turnstile-wrapper') ||
+                    document.querySelector('iframe[src*="challenges.cloudflare.com"]') ||
+                    document.querySelector('input[name="cf-turnstile-response"]')
+                );
+            }""")
+
+            if not has_turnstile:
+                return False
+
+            self.log("         • Cloudflare Turnstile: [PHÁT HIỆN TRONG FORM BÌNH LUẬN]", "cyan")
+
+            # Kiểm tra xem đã giải xong sẵn chưa
+            already_solved = page_or_frame.evaluate("""() => {
+                const token = document.querySelector('input[name="cf-turnstile-response"]');
+                if (token && token.value && token.value.length > 10) return true;
+                const txt = document.body ? document.body.innerText : '';
+                return txt.includes('Thành công!') || txt.includes('Success!');
+            }""")
+
+            if already_solved:
+                self.log("         • Cloudflare Turnstile: [ĐÃ XÁC THỰC THÀNH CÔNG! ✓]", "bold green")
+                return True
+
+            # Tìm iframe Turnstile
+            turnstile_frame = None
+            frames_to_check = page_or_frame.frames if hasattr(page_or_frame, 'frames') else (page_or_frame.page.frames if hasattr(page_or_frame, 'page') else [])
+            for frame in frames_to_check:
+                if "challenges.cloudflare.com" in (frame.url or "").lower():
+                    turnstile_frame = frame
+                    break
+
+            if turnstile_frame:
+                cb_selectors = [
+                    "input[type='checkbox']",
+                    ".ctp-checkbox-label",
+                    "#challenge-stage",
+                    "label.ctp-checkbox-label",
+                    "span.mark",
+                    "div[id*='turnstile']"
+                ]
+                for c_sel in cb_selectors:
+                    cb = turnstile_frame.locator(c_sel).first
+                    try:
+                        if cb.count() > 0 and cb.is_visible():
+                            cb.click(timeout=2500)
+                            self.log("         • Cloudflare Turnstile: [ĐÃ CLICK VÀO CHECKBOX XÁC MINH]", "yellow")
+                            break
+                    except Exception:
+                        pass
+
+            # Đợi tối đa 10s để Turnstile xác thực và điền token
+            start = time.time()
+            while time.time() - start < 10:
+                is_done = page_or_frame.evaluate("""() => {
+                    const token = document.querySelector('input[name="cf-turnstile-response"]');
+                    if (token && token.value && token.value.length > 10) return true;
+                    const txt = document.body ? document.body.innerText : '';
+                    return txt.includes('Thành công!') || txt.includes('Success!');
+                }""")
+                if is_done:
+                    self.log("         • Cloudflare Turnstile: [XÁC THỰC THÀNH CÔNG - 'Thành công!' ✓]", "bold green")
+                    time.sleep(0.5)
+                    return True
+                time.sleep(1.0)
+
+            return True
+        except Exception as e:
+            self.log(f"         • Cloudflare Turnstile: {e}", "dim")
+            return False
+
     def reply_to_comment(self, page: Page, reply_text: str, author_name: str, email: str = "") -> dict:
         """
         Tìm bình luận có sẵn của người khác, bấm nút '↳ Trả lời' (Reply) và gửi bình luận.
@@ -146,7 +227,7 @@ class CommentPoster:
                     break
 
             if not reply_btn:
-                result["message"] = "Không tìm thấy nút Trả lời bình luận cũ (hoặc web yêu cầu đăng nhập)"
+                result["message"] = "Không tìm thấy nút Trả lời bình luận cũ"
                 return result
 
             # Lấy thông tin trích dẫn người được trả lời
@@ -159,7 +240,7 @@ class CommentPoster:
             reply_btn.scroll_into_view_if_needed()
             time.sleep(0.5)
             self._safe_click(reply_btn)
-            self.log(f"      ↳ [PHÂN TÍCH] Đã xác định & click nút '↳ Trả lời': '{result['replied_to'][:30]}...'", "cyan")
+            self.log(f"      ↳ [PHÂN TÍCH] Đã click nút '↳ Trả lời': '{result['replied_to'][:30]}...'", "cyan")
             time.sleep(1.2)
 
             # Điền vào form bình luận xuất hiện sau khi bấm Trả lời
@@ -170,13 +251,15 @@ class CommentPoster:
             result["message"] = f"Lỗi khi bấm nút Trả lời: {e}"
             return result
 
-    def post_comment(self, page: Page, comment_text: str, author_name: str, email: str = "") -> dict:
+    def post_comment(self, page: Page, comment_text: str, author_name: str = "flexphim.top", email: str = "") -> dict:
         """
         Tìm khung bình luận trên trang:
         1. Đợi Cloudflare bot protection nếu trang đang bị kiểm tra.
-        2. Tự động kích hoạt nút mở form nếu form ẩn (như Motchill, Rophim).
-        3. Phân tích chi tiết và xác định chính xác các ô Textarea, Name, Email, Captcha, Submit.
-        4. Gửi bình luận và xác thực kết quả.
+        2. Tự động kích hoạt nút mở form nếu form ẩn (như Motchill: 'Viết bình luận' / 'Gửi bình luận').
+        3. Nhập nội dung bình luận vào Textarea (VD: 'qua flexphim xem đi mọi người').
+        4. Nhập Tên tác giả vào ô text bên dưới (VD: 'flexphim.top').
+        5. Xử lý Cloudflare Turnstile trong form (đợi tick xanh 'Thành công!').
+        6. Bấm nút 'Gửi bình luận' và xác thực kết quả.
         """
         result = {
             "success": False,
@@ -185,7 +268,7 @@ class CommentPoster:
         }
 
         try:
-            # 1. Đợi Cloudflare nếu có
+            # 1. Đợi Cloudflare bảo vệ trang nếu có
             CloudflareHandler.wait_and_bypass(page, log_fn=self.log)
 
             # Cuộn trang xuống khu vực bình luận
@@ -233,17 +316,19 @@ class CommentPoster:
                 if comment_box:
                     break
 
-            # 3. Nếu chưa thấy ô nhập (nhiều web ẩn form sau nút 'Gửi bình luận' / 'Viết bình luận')
+            # 3. Nếu chưa thấy ô nhập (nhiều web ẩn form sau nút 'Viết bình luận' / 'Gửi bình luận')
             if not comment_box:
                 trigger_selectors = [
+                    "div:has-text('Viết bình luận')",
+                    "button:has-text('Viết bình luận')",
+                    "h2:has-text('Viết bình luận')",
+                    "h3:has-text('Viết bình luận')",
+                    "span:has-text('Viết bình luận')",
+                    "a:has-text('Viết bình luận')",
                     "button:has-text('Gửi bình luận')",
                     "div:has-text('Gửi bình luận')",
                     "a:has-text('Gửi bình luận')",
                     "span:has-text('Gửi bình luận')",
-                    "button:has-text('Viết bình luận')",
-                    "div:has-text('Viết bình luận')",
-                    "a:has-text('Viết bình luận')",
-                    "span:has-text('Viết bình luận')",
                     "div[class*='bg-[#FF7E08]']:has-text('bình luận')",
                     "button[class*='bg-[#FF7E08]']",
                     "*[class*='bg-[#FF7E08]']",
@@ -264,7 +349,7 @@ class CommentPoster:
                                 clicked = self._safe_click(trig)
                                 if clicked:
                                     tag_name = trig.evaluate("el => el.tagName")
-                                    self.log(f"      🔔 [PHÂN TÍCH DOM] Đã phát hiện nút mở form ẩn: <{tag_name}> '{trig_sel}' -> Click kích hoạt!", "cyan")
+                                    self.log(f"      🔔 [PHÂN TÍCH DOM] Đã phát hiện & click mở khung form ẩn: <{tag_name}> '{trig_sel}'", "cyan")
                                     time.sleep(1.2)
                                     break
                         except Exception:
@@ -286,7 +371,7 @@ class CommentPoster:
                     if comment_box:
                         break
 
-            # 4. Quét các Frame phụ (iframe bình luận Facebook, iframe ngoài) nếu trang chính không có
+            # 4. Quét các Frame phụ (iframe ngoài, widget) nếu trang chính không có
             if not comment_box:
                 for frame in page.frames:
                     if frame == page.main_frame:
@@ -318,7 +403,7 @@ class CommentPoster:
             # Báo cáo kết quả phân tích DOM
             box_tag = comment_box.evaluate("el => el.tagName")
             self.log(f"      🔍 [PHÂN TÍCH DOM BÌNH LUẬN]", "bold cyan")
-            self.log(f"         • Ô nhập nội dung: [XÁC ĐỊNH THÀNH CÔNG] <{box_tag}> (selector: {found_sel})", "green")
+            self.log(f"         • Ô nhập nội dung: [XÁC ĐỊNH THÀNH CÔNG] <{box_tag}> ({found_sel})", "green")
 
             # Cuộn mượt mà đến khung bình luận
             try:
@@ -327,18 +412,34 @@ class CommentPoster:
             except Exception:
                 pass
 
-            # 5. Tìm và điền ô Tên (Author / Nickname / Họ tên) nếu có
+            # 5. Nhập nội dung bình luận vào ô Textarea (VD: 'qua flexphim xem đi mọi người')
+            self._safe_click(comment_box)
+            try:
+                comment_box.fill("")
+                comment_box.fill(comment_text)
+            except Exception:
+                for ch in comment_text:
+                    comment_box.type(ch, delay=random.randint(20, 45))
+            self.log(f"         • Nội dung Flexphim: [ĐÃ NHẬP XONG] \"{comment_text}\"", "bold yellow")
+            time.sleep(0.6)
+
+            # 6. Tìm và điền ô Tên / Tên web bên dưới ô Textarea (VD: 'flexphim.top')
+            name_val = author_name if author_name else "flexphim.top"
             name_selectors = [
                 "input[name*='name']",
                 "input[name*='author']",
                 "input[name*='nickname']",
+                "input[name*='user']",
                 "input[name*='hoten']",
-                "input[id*='author']",
-                "input[id*='name']",
                 "input[placeholder*='tên' i]",
                 "input[placeholder*='name' i]",
+                "input[placeholder*='nickname' i]",
                 "input[placeholder*='họ tên' i]",
-                "input[placeholder*='người gửi' i]"
+                "input[placeholder*='người gửi' i]",
+                "input[placeholder*='website' i]",
+                "input[placeholder*='web' i]",
+                "form input[type='text']",
+                "input:not([type='hidden']):not([type='submit']):not([type='checkbox']):not([name='q'])"
             ]
 
             name_input = None
@@ -357,14 +458,14 @@ class CommentPoster:
             if name_input:
                 self._safe_click(name_input)
                 name_input.fill("")
-                for ch in author_name:
+                for ch in name_val:
                     name_input.type(ch, delay=random.randint(25, 55))
-                self.log(f"         • Ô Tên tác giả: [XÁC ĐỊNH THÀNH CÔNG] -> Đã điền: '{author_name}'", "green")
+                self.log(f"         • Ô Tên / Website tác giả: [XÁC ĐỊNH THÀNH CÔNG] -> Đã điền: '{name_val}'", "bold green")
                 time.sleep(0.4)
             else:
-                self.log(f"         • Ô Tên tác giả: [KHÔNG YÊU CẦU / ĐÃ ĐĂNG NHẬP SẴN TÀI KHOẢN]", "dim")
+                self.log(f"         • Ô Tên tác giả: [KHÔNG YÊU CẦU / ĐÃ LƯU TÀI KHOẢN]", "dim")
 
-            # 6. Tìm và điền ô Gmail / Email nếu có
+            # 7. Tìm và điền ô Gmail / Email nếu có (và khác ô Tên)
             if email:
                 email_selectors = [
                     "input[type='email']",
@@ -372,58 +473,41 @@ class CommentPoster:
                     "input[name*='mail']",
                     "input[id*='email']",
                     "input[placeholder*='email' i]",
-                    "input[placeholder*='gmail' i]",
-                    "input[placeholder*='thư điện tử' i]"
+                    "input[placeholder*='gmail' i]"
                 ]
-                email_found = False
                 for sel in email_selectors:
                     el = target_context.locator(sel).first
                     try:
-                        if el.count() > 0 and el.is_visible():
+                        if el.count() > 0 and el.is_visible() and el != name_input:
                             self._safe_click(el)
                             el.fill("")
                             for ch in email:
                                 el.type(ch, delay=random.randint(20, 45))
                             self.log(f"         • Ô Gmail: [XÁC ĐỊNH THÀNH CÔNG] -> Đã điền: '{email}'", "green")
-                            email_found = True
                             time.sleep(0.4)
                             break
                     except Exception:
                         pass
-                if not email_found:
-                    self.log(f"         • Ô Gmail: [KHÔNG YÊU CẦU / ĐÃ LƯU PROFILE]", "dim")
 
-            # 7. Nhập nội dung bình luận vào ô Textarea (Spam CMT Flexphim)
-            self._safe_click(comment_box)
-            try:
-                comment_box.fill("")
-                comment_box.fill(comment_text)
-            except Exception:
-                for ch in comment_text:
-                    comment_box.type(ch, delay=random.randint(20, 45))
-            self.log(f"         • Nội dung Flexphim: [ĐÃ NHẬP XONG] \"{comment_text}\"", "bold yellow")
+            # 8. XỬ LÝ CLOUDFLARE TURNSTILE TRONG FORM (Đợi tick xanh 'Thành công!' như trong ảnh)
+            turnstile_solved = self.solve_form_turnstile(target_context)
+            if not turnstile_solved:
+                # Kiểm tra thêm Math Captcha nếu trang không dùng Turnstile
+                self.solve_math_captcha(target_context)
+
             time.sleep(1.0)
 
-            # 8. Tự động kiểm tra và giải Math Captcha nếu có trước khi bấm gửi
-            solved_captcha = self.solve_math_captcha(target_context)
-            if not solved_captcha:
-                self.log(f"         • Captcha bảo vệ: [KHÔNG CÓ / TRANG AN TOÀN]", "dim")
-
-            # 9. Tìm nút Gửi (Submit button)
+            # 9. Tìm nút Gửi (Submit button: 'Gửi bình luận')
             submit_selectors = [
-                "form button[type='submit']",
-                "form input[type='submit']",
-                "#commentform input[type='submit']",
-                "#commentform button",
-                ".comment-form button[type='submit']",
-                ".comment-form .btn-submit",
-                "button[type='submit']",
-                "input[type='submit']",
+                "button:has-text('Gửi bình luận')",
+                "input[value='Gửi bình luận']",
                 "button:has-text('Gửi')",
                 "button:has-text('Đăng bình luận')",
                 "button:has-text('Đăng')",
-                "button:has-text('Submit')",
-                "button:has-text('Post')",
+                "form button[type='submit']",
+                "form input[type='submit']",
+                "button[type='submit']",
+                "input[type='submit']",
                 ".btn-submit-comment",
                 ".btn-comment-submit",
                 "#submit-comment",
@@ -445,10 +529,10 @@ class CommentPoster:
 
             if submit_btn:
                 btn_name = submit_btn.evaluate("el => el.innerText || el.value || el.tagName")
-                self.log(f"         • Nút Gửi/Đăng: [XÁC ĐỊNH THÀNH CÔNG] <{btn_name.strip()}> -> Đang bấm gửi!", "bold green")
+                self.log(f"         • Nút Bấm Gửi: [XÁC ĐỊNH THÀNH CÔNG] <{btn_name.strip()}> -> Đang bấm gửi bình luận!", "bold green")
                 self._safe_click(submit_btn)
             else:
-                self.log(f"         • Nút Gửi/Đăng: [GỬI BẰNG PHÍM ENTER / CTRL+ENTER]", "green")
+                self.log(f"         • Nút Bấm Gửi: [GỬI BẰNG PHÍM ENTER / CTRL+ENTER]", "green")
                 try:
                     comment_box.press("Control+Enter")
                 except Exception:
@@ -465,9 +549,9 @@ class CommentPoster:
             result["success"] = True
             result["verified"] = verified
             if verified:
-                result["message"] = f"Đã gửi và xác nhận bình luận: '{comment_text}'"
+                result["message"] = f"Đã gửi và xác nhận bình luận: '{comment_text}' (Tác giả: {name_val})"
             else:
-                result["message"] = f"Đã gửi bình luận: '{comment_text}' (yêu cầu đã được server tiếp nhận)"
+                result["message"] = f"Đã gửi bình luận: '{comment_text}' (Tác giả: {name_val})"
 
         except Exception as e:
             result["message"] = f"Lỗi trong quá trình gửi bình luận: {str(e)[:120]}"

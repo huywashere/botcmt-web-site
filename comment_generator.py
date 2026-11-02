@@ -3,7 +3,7 @@ import re
 from ai_commenter import AICommenter
 
 NAMES = [
-    "Minh Tuấn", "Hoàng Nam", "Khánh Linh", "Bảo Trâm", "Hải Đăng",
+    "flexphim.top", "flexphim", "FlexPhim.top", "Minh Tuấn", "Hoàng Nam", "Khánh Linh", "Bảo Trâm", "Hải Đăng",
     "Ngọc Ánh", "Quốc Bảo", "Thuỳ Dương", "Văn Hậu", "Phương Thảo",
     "Trọng Hiếu", "Thanh Hằng", "Đức Anh", "Mỹ Linh", "Việt Hoàng",
     "Quỳnh Nga", "Tuấn Kiệt", "Mai Phương", "Đăng Khoa", "Lan Anh"
