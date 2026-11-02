@@ -134,7 +134,7 @@ def load_keywords_from_file(filepath: str) -> list:
                     keywords.append(kw)
     return keywords
 
-def setup_login_session(config):
+def setup_login_session(config, target_email: str = ""):
     """
     Mở trình duyệt trực tiếp với thư mục profile để người dùng đăng nhập tài khoản
     Google / Gmail hoặc tài khoản các web phim (Motchill, Motphim, Phimmoi, Rophim).
@@ -142,25 +142,27 @@ def setup_login_session(config):
     """
     from playwright.sync_api import sync_playwright
 
+    email = target_email or config.get("comment", {}).get("custom_email", "") or "userwritezeus@gmail.com"
     profile_dir = config["browser"].get("profile_dir", "user_profile")
     os.makedirs(profile_dir, exist_ok=True)
     abs_profile = os.path.abspath(profile_dir)
 
     console.print(Panel(
-        "[bold cyan]🔑 CHẾ ĐỘ ĐĂNG NHẬP & THIẾT LẬP TÀI KHOẢN (PERSISTENT PROFILE)[/bold cyan]\n\n"
-        f"• Thư mục lưu dữ liệu duyệt web: [bold green]{abs_profile}[/bold green]\n"
-        "• Trình duyệt sẽ mở ra. Bạn có thể:\n"
-        "  1. Đăng nhập Google / Gmail (accounts.google.com)\n"
-        "  2. Đăng nhập tài khoản trên các web phim (Motchill, Motphim, Phimmoi, Rophim)\n"
-        "  3. Lưu tài khoản, mật khẩu hoặc cookie thoải mái\n\n"
-        "[bold yellow]👉 Sau khi đăng nhập xong, hãy quay lại cửa sổ console này và nhấn phím ENTER để hoàn tất.[/bold yellow]",
+        f"[bold cyan]🔑 CHẾ ĐỘ ĐĂNG NHẬP & THIẾT LẬP TÀI KHOẢN (PERSISTENT PROFILE)[/bold cyan]\n\n"
+        f"• Tài khoản Google mục tiêu: [bold yellow]{email}[/bold yellow]\n"
+        f"• Thư mục lưu phiên duyệt web: [bold green]{abs_profile}[/bold green]\n"
+        f"• Đang mở Google Chrome sạch (đã gỡ bỏ cờ tự động hóa chống bot).\n"
+        f"• Cửa sổ đăng nhập Google sẽ tự động mở sẵn tài khoản [bold cyan]{email}[/bold cyan].\n\n"
+        f"[bold yellow]👉 Sau khi đăng nhập thành công, hãy quay lại đây và nhấn phím ENTER để lưu phiên vĩnh viễn.[/bold yellow]",
         border_style="cyan"
     ))
 
     with sync_playwright() as p:
         args = [
             "--disable-blink-features=AutomationControlled",
-            "--start-maximized"
+            "--start-maximized",
+            "--no-sandbox",
+            "--disable-infobars"
         ]
         chrome_path_exists = (
             os.path.exists("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe") or 
@@ -170,16 +172,34 @@ def setup_login_session(config):
             user_data_dir=abs_profile,
             headless=False,
             channel="chrome" if chrome_path_exists else None,
+            ignore_default_args=["--enable-automation"],
             args=args,
             viewport=None
         )
+        context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        """)
+
         page = context.pages[0] if context.pages else context.new_page()
+        login_url = f"https://accounts.google.com/signin/v2/identifier?flowName=GlifWebSignIn&flowEntry=ServiceLogin&Email={email}" if email else "https://accounts.google.com"
         try:
-            page.goto("https://accounts.google.com", timeout=30000)
+            page.goto(login_url, timeout=30000)
+            time.sleep(1.5)
+            # Tự động điền email nếu ô input rỗng
+            try:
+                email_input = page.locator('input[type="email"]')
+                if email_input.count() > 0 and email:
+                    curr_val = email_input.input_value()
+                    if not curr_val:
+                        email_input.fill(email)
+                        time.sleep(0.5)
+                        page.keyboard.press("Enter")
+            except Exception:
+                pass
         except Exception as e:
             console.print(f"[dim]Lưu ý mở trang: {e}[/dim]")
 
-        console.print("[bold green]🌐 Trình duyệt đã mở. Hãy đăng nhập tài khoản của bạn trên trình duyệt...[/bold green]")
+        console.print(f"\n[bold green]🌐 Trình duyệt đã mở. Hãy đăng nhập tài khoản '{email}' trên trình duyệt...[/bold green]")
         input("\n👉 [Nhấn ENTER tại đây sau khi bạn đã hoàn tất đăng nhập trên trình duyệt...] ")
         context.close()
         console.print("\n[bold green]✅ ĐÃ LƯU PHIÊN ĐĂNG NHẬP VĨNH VIỄN VÀO USER_PROFILE![/bold green]")
@@ -233,7 +253,8 @@ def main():
 
     # Chế độ thiết lập đăng nhập profile
     if args.setup_login:
-        setup_login_session(config)
+        email = args.email or config.get("comment", {}).get("custom_email", "")
+        setup_login_session(config, target_email=email)
         return
 
     # Áp dụng tham số dòng lệnh

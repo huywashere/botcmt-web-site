@@ -104,6 +104,11 @@ class GoogleTopBot:
             Object.defineProperty(navigator, 'languages', { get: () => ['vi-VN', 'vi', 'en-US', 'en'] });
         """
 
+        chrome_path_exists = (
+            os.path.exists("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe") or 
+            os.path.exists("C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe")
+        )
+
         if use_persistent:
             os.makedirs(profile_dir, exist_ok=True)
             self.log(f"📁 Lưu phiên đăng nhập trình duyệt (Profile): '{profile_dir}'", "dim")
@@ -111,6 +116,8 @@ class GoogleTopBot:
                 user_data_dir=profile_dir,
                 headless=headless,
                 slow_mo=slow_mo,
+                channel="chrome" if chrome_path_exists else None,
+                ignore_default_args=["--enable-automation"],
                 args=browser_args,
                 proxy=proxy_dict,
                 user_agent=user_agent,
@@ -123,6 +130,8 @@ class GoogleTopBot:
             browser = p.chromium.launch(
                 headless=headless,
                 slow_mo=slow_mo,
+                channel="chrome" if chrome_path_exists else None,
+                ignore_default_args=["--enable-automation"],
                 args=browser_args,
                 proxy=proxy_dict
             )
