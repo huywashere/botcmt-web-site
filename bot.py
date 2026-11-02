@@ -222,6 +222,7 @@ def main():
     parser.add_argument("--tg-token", type=str, help="Bot Token Telegram để nhận thông báo")
     parser.add_argument("--tg-chat", type=str, help="Chat ID Telegram để nhận thông báo")
     parser.add_argument("--remote", "--tg-remote", action="store_true", help="Chạy chế độ máy chủ điều khiển từ xa qua Telegram (/crawl, /status, /add...)")
+    parser.add_argument("--high-engagement", "--top-views", action="store_true", help="Ưu tiên tối đa các phim có tương tác cao (Hero Slider, BXH, Top lượt xem)")
     parser.add_argument("--no-fake-watch", action="store_true", help="Tắt tính năng giả lập bấm xem video phim")
     parser.add_argument("--no-reply", action="store_true", help="Tắt chế độ trả lời bình luận của người khác (chỉ gửi cmt mới)")
 
@@ -292,6 +293,9 @@ def main():
     if args.no_vote:
         config.setdefault("interaction", {})["auto_vote_5_stars"] = False
 
+    if args.high_engagement:
+        config.setdefault("comment", {})["prioritize_high_engagement"] = True
+
     if args.no_fake_watch:
         config.setdefault("interaction", {})["simulate_video_playback"] = False
 
@@ -336,6 +340,7 @@ def main():
         table.add_row("Chế độ soạn bình luận", ai_status)
         cmts_count = config["comment"].get("comments_per_website", 3)
         table.add_row("Số phim Hot cmt mỗi web", f"{cmts_count} phim Hot / 1 website")
+        table.add_row("Dò tìm tương tác cao", "BẬT (Hero Slider, BXH, Top lượt xem)")
 
     # Proxy
     proxy_status = f"Đang BẬT ({config['proxy'].get('server')})" if config["proxy"].get("enabled") and config["proxy"].get("server") else "Không dùng Proxy (IP trực tiếp)"

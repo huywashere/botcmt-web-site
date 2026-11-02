@@ -38,7 +38,14 @@ Bot tự động hóa tìm kiếm, cào dữ liệu và **bình luận thông mi
 - Tự động ghi nhớ toàn bộ link các phim đã bình luận vào file `output/commented_history.json`.
 - Khi bot chạy lặp lại định kỳ, bot sẽ **tự động bỏ qua các phim đã bình luận** và tìm phim mới tiếp theo, tránh tuyệt đối việc bình luận 2 lần trên cùng 1 bộ phim.
 
-### 7. 🤖 Điều Khiển Từ Xa 2 Chiều Qua Telegram (2-Way Remote Controller)
+### 7. 🔥 Dò Tìm Phim Tương Tác Cao (High-Engagement Hunter)
+- **Thuật toán quét tương tác thông minh:** Khi mở một trang web phim, bot không chọn phim ngẫu nhiên mà tự động phân tích và tính toán **Điểm Tương Tác (Engagement Score)**:
+  - 🥇 **Hero Slider / Banner đầu trang:** Ưu tiên các phim được web ghim ở vị trí nổi bật nhất.
+  - 🥈 **Bảng Xếp Hạng (BXH) & Top Xem Nhiều:** Ưu tiên các phim nằm trong mục *Top Ngày, Top Tuần, Top Tháng, Phim Thịnh Hành*.
+  - 🥉 **Chỉ số Lượt xem & Bình luận:** Tự động bóc tách số lượt xem (*150K views, 50 bình luận, điểm IMDb*) để xếp hạng các phim được quan tâm nhất lên đầu.
+- Giúp bình luận của bạn luôn nằm ở các phim "nóng" nhất, tiếp cận lượng người xem tối đa!
+
+### 8. 🤖 Điều Khiển Từ Xa 2 Chiều Qua Telegram (2-Way Remote Controller)
 - **Cầm điện thoại điều khiển máy tính:** Chỉ cần mở Telegram trên điện thoại, bạn có thể nhắn tin ra lệnh cho bot:
   - `/crawl` hoặc `/run` : Bắt đầu chu trình cào và bình luận ngay lập tức.
   - `/status` : Xem thống kê số phim đã cmt, trạng thái bot.

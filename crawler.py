@@ -474,48 +474,105 @@ class GoogleTopBot:
         parsed = urlparse(domain_or_url)
         return parsed.netloc or text
 
-    def _extract_hot_movie_links(self, page: Page, limit: int = 3) -> list:
-        """Trích xuất danh sách các phim Hot/nổi bật nhất trên trang chủ hoặc trang danh mục."""
-        js_code = """
+    def _extract_high_engagement_movies(self, page: Page, limit: int = 3) -> list:
+        """
+        Dò tìm thông minh các bộ phim có TƯƠNG TÁC CAO NHẤT trên website:
+        1. Ưu tiên Hero Slider / Carousel banner đầu trang (vị trí quảng bá đắc địa nhất).
+        2. Ưu tiên Bảng Xếp Hạng, Top Xem Nhiều (Top ngày/tuần/tháng, BXH, Trending).
+        3. Bóc tách số lượt xem (Views) và số lượng bình luận để tính điểm tương tác (Score).
+        4. Sắp xếp các phim có tương tác cao nhất lên đầu để bình luận.
+        """
+        js_code = r"""
         () => {
-            const selectors = [
-                "[class*='hot'] a[href]",
-                "[class*='featured'] a[href]",
-                "[class*='slider'] a[href]",
-                "[class*='trending'] a[href]",
-                ".tray-item a[href]",
-                ".film-item a[href]",
-                ".movie-item a[href]",
-                ".list-film a[href]",
-                "a[href*='/phim/']",
-                "a[href*='/phim-']",
-                ".item a[href]"
-            ];
-            const seen = new Set();
             const results = [];
-            const ignores = ['the-loai', 'quoc-gia', 'nam-phat-hanh', 'dien-vien', 'dao-dien', 'tin-tuc', 'faq', 'contact', 'login', 'register'];
+            const seen = new Set();
+            const ignores = ['the-loai', 'quoc-gia', 'nam-phat-hanh', 'dien-vien', 'dao-dien', 'tin-tuc', 'faq', 'contact', 'login', 'register', 'privacy', 'danh-sach'];
 
-            for (const sel of selectors) {
-                const links = document.querySelectorAll(sel);
-                for (const a of links) {
-                    const href = a.href;
-                    if (!href || seen.has(href)) continue;
-                    if (href.startsWith('javascript:') || href.includes('#')) continue;
-                    if (ignores.some(ig => href.toLowerCase().includes(ig))) continue;
+            // Lấy toàn bộ các thẻ link phim
+            const allLinks = document.querySelectorAll('a[href*="/phim/"], a[href*="/phim-"], .movie-card a[href], .film-item a[href], .tray-item a[href]');
+            
+            for (const a of allLinks) {
+                const href = a.href;
+                if (!href || seen.has(href)) continue;
+                if (href.startsWith('javascript:') || href.includes('#')) continue;
+                if (ignores.some(ig => href.toLowerCase().includes(ig))) continue;
 
-                    const text = a.innerText ? a.innerText.trim() : (a.title ? a.title.trim() : "");
-                    seen.add(href);
-                    results.push({ url: href, title: text });
-                    if (results.length >= 15) break;
+                // Lấy tên phim
+                let title = (a.innerText || a.title || "").split('\\n')[0].trim();
+                if (!title || title.length < 2) {
+                    const img = a.querySelector('img');
+                    if (img && img.alt) title = img.alt.trim();
                 }
-                if (results.length >= 15) break;
+                if (!title || title.length < 2) continue;
+
+                seen.add(href);
+
+                // Lấy toàn bộ text của card phim
+                const card = a.closest('.movie-card, .film-item, .item, article, li, div') || a;
+                const cardText = (card.innerText || "").replace(/\\s+/g, ' ');
+
+                // 1. Kiểm tra vị trí hiển thị
+                let category = "Phim Nổi Bật";
+                let positionScore = 10000;
+
+                const isSlider = Boolean(a.closest('.swiper-slide, .slider, .owl-carousel, [class*="slider"], [class*="banner"], [class*="hero"], [class*="feature"]'));
+                const isRanking = Boolean(a.closest('[class*="bxh"], [class*="ranking"], [class*="top-view"], [class*="most-view"], [class*="popular"], [class*="trending"], .sidebar, .widget'));
+
+                if (isSlider) {
+                    category = "Hero Slider (Top 1 Trang Chủ)";
+                    positionScore = 100000;
+                } else if (isRanking) {
+                    category = "Bảng Xếp Hạng (Top Xem Nhiều)";
+                    positionScore = 80000;
+                }
+
+                // 2. Bóc tách lượt xem
+                let views = 0;
+                const viewMatch = cardText.match(/([0-9.,]+)\s*(k|m|nghìn|triệu|lượt xem|views)/i);
+                if (viewMatch) {
+                    let num = parseFloat(viewMatch[1].replace(/,/g, '.'));
+                    const unit = viewMatch[2].toLowerCase();
+                    if (unit.startsWith('k') || unit.startsWith('nghìn')) num *= 1000;
+                    else if (unit.startsWith('m') || unit.startsWith('triệu')) num *= 1000000;
+                    views = Math.round(num);
+                }
+
+                // 3. Bóc tách số lượng bình luận nếu có
+                let commentsCount = 0;
+                const cmtMatch = cardText.match(/([0-9]+)\s*(cmt|bình luận|comment)/i);
+                if (cmtMatch) {
+                    commentsCount = parseInt(cmtMatch[1]);
+                }
+
+                // 4. Bóc tách điểm số đánh giá
+                let rating = 0;
+                const rateMatch = cardText.match(/([0-9]\.[0-9])/);
+                if (rateMatch) {
+                    rating = parseFloat(rateMatch[1]);
+                }
+
+                // Tính tổng điểm tương tác (Engagement Score)
+                const totalScore = positionScore + views + (commentsCount * 1000) + (rating * 500);
+
+                results.push({
+                    url: href,
+                    title: title,
+                    views: views,
+                    commentsCount: commentsCount,
+                    rating: rating,
+                    category: category,
+                    score: totalScore
+                });
             }
+
+            // Sắp xếp các phim có điểm tương tác cao nhất lên đầu
+            results.sort((x, y) => y.score - x.score);
             return results;
         }
         """
         try:
-            links = page.evaluate(js_code)
-            return links[:limit] if links else []
+            movies = page.evaluate(js_code)
+            return movies[:limit] if movies else []
         except Exception:
             return []
 
@@ -568,16 +625,16 @@ class GoogleTopBot:
             domain_brand = self._get_domain_brand(landing_url, allowed_domains)
             self.log(f"   🌐 Đang mở hệ thống web: [bold cyan]{domain_brand.upper()}[/bold cyan] ({landing_url})", "blue")
 
-            # Tìm danh sách phim Hot trên web này để bình luận nhiều lần
+            # Tìm danh sách phim có TƯƠNG TÁC CAO NHẤT trên web này để bình luận
             hot_movies = []
             if prioritize_hot and auto_comment:
-                candidates = self._extract_hot_movie_links(new_page, limit=comments_per_web * 3)
+                candidates = self._extract_high_engagement_movies(new_page, limit=comments_per_web * 4)
                 if not self.force_recomment:
                     fresh_movies = []
                     for m in candidates:
                         m_url = m.get("url", "")
                         if self.history_mgr.is_commented(m_url):
-                            self.log(f"   ⏩ Đã bỏ qua phim đã từng bình luận trước đó: [dim]{m.get('title')}[/dim]", "dim")
+                            self.log(f"   ⏩ Đã bỏ qua phim tương tác cao đã bình luận trước đó: [dim]{m.get('title')}[/dim]", "dim")
                         else:
                             fresh_movies.append(m)
                     hot_movies = fresh_movies[:comments_per_web]
@@ -585,12 +642,14 @@ class GoogleTopBot:
                     hot_movies = candidates[:comments_per_web]
 
             if hot_movies and len(hot_movies) > 0:
-                self.log(f"   🔥 Tìm thấy {len(hot_movies)} phim Hot/nổi bật trên [{domain_brand.upper()}]. Bắt đầu cào & bình luận từng phim:", "bold yellow")
+                self.log(f"   🔥 [TƯƠNG TÁC CAO] Đã dò tìm được {len(hot_movies)} phim có tương tác/lượt xem cao nhất trên [{domain_brand.upper()}]:", "bold yellow")
                 for sub_idx, hot_m in enumerate(hot_movies, 1):
                     target_movie_url = hot_m.get("url")
                     target_movie_title = hot_m.get("title") or f"Phim Hot #{sub_idx}"
+                    category = hot_m.get("category", "Top Thịnh Hành")
+                    views_info = f"{hot_m.get('views', 0):,} lượt xem" if hot_m.get("views") else "Nổi bật nhất"
 
-                    self.log(f"\n   👉 [{domain_brand.upper()} - Phim Hot {sub_idx}/{len(hot_movies)}] {target_movie_title}", "cyan")
+                    self.log(f"\n   👉 [{domain_brand.upper()} - Phim #{sub_idx}] {target_movie_title} [cyan]({category} | {views_info})[/cyan]", "cyan")
                     try:
                         new_page.goto(target_movie_url, wait_until="domcontentloaded", timeout=20000)
                         time.sleep(1.5)
@@ -605,7 +664,8 @@ class GoogleTopBot:
                         keyword=keyword,
                         rank=rank,
                         sub_rank=sub_idx,
-                        domain_brand=domain_brand
+                        domain_brand=domain_brand,
+                        engagement_info=f"{category} | {views_info}"
                     )
 
                     if sub_idx < len(hot_movies):
@@ -621,7 +681,8 @@ class GoogleTopBot:
                     keyword=keyword,
                     rank=rank,
                     sub_rank=1,
-                    domain_brand=domain_brand
+                    domain_brand=domain_brand,
+                    engagement_info="Trang Chi Tiết Phim"
                 )
 
         except Exception as e:
@@ -633,7 +694,7 @@ class GoogleTopBot:
                 except Exception:
                     pass
 
-    def _process_single_movie_page(self, page: Page, movie_url: str, preview_title: str, keyword: str, rank: int, sub_rank: int, domain_brand: str):
+    def _process_single_movie_page(self, page: Page, movie_url: str, preview_title: str, keyword: str, rank: int, sub_rank: int, domain_brand: str, engagement_info: str = "Tương tác cao"):
         behavior_cfg = self.config.get("behavior", {})
         movie_cfg = self.config.get("movie_filter", {})
         comment_cfg = self.config.get("comment", {})
@@ -804,6 +865,7 @@ class GoogleTopBot:
             tg_caption = (
                 f"🎬 *BOT CÀO PHIM & BÌNH LUẬN*\n\n"
                 f"🍿 *Phim:* {movie_name}\n"
+                f"🔥 *Độ tương tác:* [{engagement_info}]\n"
                 f"🌐 *Trang web:* [{domain_brand.upper()}]\n"
                 f"🔗 *Link phim:* {current_url}\n"
                 f"👤 *Người gửi:* {author_name or 'Ẩn danh'} ({author_email})\n"
