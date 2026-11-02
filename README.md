@@ -1,6 +1,6 @@
-# 🎬 Bot Cào Dữ Liệu & Tự Động Bình Luận Web Phim Top Google
+# 🎬 Bot Cào Dữ Liệu & Tự Động Bình Luận Web Phim Top Google (Bản Pro)
 
-Bot chuyên biệt tìm kiếm, cào dữ liệu và **tự động bình luận thông minh** trên 4 hệ thống web phim lớn:
+Bot tự động hóa tìm kiếm, cào dữ liệu và **bình luận thông minh bằng AI** trên 4 hệ thống web phim lớn:
 1. **Motchill** (`motchill.*`)
 2. **Motphim** (`motphim.*`)
 3. **Phimmoi** (`phimmoi.*`)
@@ -8,84 +8,124 @@ Bot chuyên biệt tìm kiếm, cào dữ liệu và **tự động bình luận
 
 ---
 
-## 🌟 Tính Năng Tự Động Bình Luận Thông Minh
+## 🌟 5 Tính Năng Nâng Cấp Vượt Trội (Bản Pro)
 
-* **Soạn bình luận ngữ cảnh tự nhiên:**
-  - Tự động bóc tách tên phim gốc (lọc bỏ các từ thừa như *Full HD, Vietsub, Tập 1, Motchill, Phimmoi*...).
-  - Ghép tên phim vào các mẫu câu cảm nghĩ của người xem phim chân thật (nhận xét diễn xuất, âm thanh, kịch bản, lời khen subteam...).
-* **Giả lập người dùng thật gửi bình luận:**
-  - Tự động tạo tên hiển thị (Nickname) ngẫu nhiên tự nhiên của người Việt (hoặc cho phép bạn tự đặt tên).
-  - Tự động cuộn trang xuống phần bình luận.
-  - Gõ phím từng ký tự với độ trễ ngẫu nhiên (Human Typing) để tránh bị chặn spam.
-  - Tự động bấm gửi hoặc Enter.
-* **Ghi nhận lịch sử bình luận:**
-  - Lưu toàn bộ bình luận đã gửi vào `output/comments_posted.csv` và `output/comments_posted.json`.
+### 1. 🔑 Lưu Phiên Trình Duyệt (Persistent Profile / Session)
+- Tự động lưu cookie, lịch sử và trạng thái đăng nhập vào thư mục `user_profile/`.
+- Bạn chỉ cần đăng nhập tài khoản web phim hoặc Facebook **1 lần duy nhất**, các lần chạy sau bot sẽ tự động giữ phiên đăng nhập và bình luận được mọi khung chat.
+
+### 2. 🧠 Bình Luận Thông Minh Bằng AI (Google Gemini AI)
+- Tích hợp Gemini AI: Bot tự đọc đoạn tóm tắt nội dung phim (synopsis) và tự động tạo 1 câu nhận xét độc nhất, bàn luận đúng tình tiết/nhân vật trong phim.
+- **Tự động chuyển đổi thông minh:** Nếu không điền API key, bot tự động dùng kho mẫu câu cảm nghĩ tiếng Việt tự nhiên đã được làm sạch tên phim.
+
+### 3. 📱 Gửi Báo Cáo & Ảnh Chụp Tức Thì Về Telegram
+- Tự động gửi tin nhắn báo cáo kèm ảnh chụp màn hình về điện thoại của bạn qua Telegram ngay khi cào xong hoặc bình luận thành công một bộ phim.
+
+### 4. 🌐 Hỗ Trợ Proxy Xoay IP (Rotating Proxy)
+- Hỗ trợ cấu hình Proxy HTTP/SOCKS5 trong `config.json` hoặc tham số dòng lệnh `--proxy`. Giúp bạn cào dữ liệu liên tục mà không lo bị chặn IP mạng nhà.
+
+### 5. ⏰ Chế Độ Hẹn Giờ Chạy Lặp Tự Động (Scheduler / Loop Mode)
+- Tự động chạy định kỳ (ví dụ mỗi 60 phút thức dậy 1 lần) để quét các phim mới phát hành trên Motchill/Phimmoi/Rophim, tương tác để lại bình luận rồi tự động nghỉ ngơi.
 
 ---
 
-## 🚀 Cách Sử Dụng
+## 📁 Cấu Trúc Dự Án
+
+```
+auto-crawl-bot-cmt-web/
+├── bot.py                # File khởi chạy chính (CLI & Bảng điều khiển Rich)
+├── crawler.py            # Động cơ cào dữ liệu & điều khiển trình duyệt Playwright
+├── movie_extractor.py    # Bộ lọc độc quyền 4 web phim & bóc tách dữ liệu
+├── comment_generator.py  # Bộ tạo bình luận thông minh (kết hợp AI & Templates)
+├── comment_poster.py     # Giả lập gõ phím người thật & gửi bình luận vào form
+├── ai_commenter.py       # Module tích hợp Gemini AI phân tích tóm tắt phim
+├── telegram_notifier.py  # Module gửi thông báo & ảnh chụp về Telegram
+├── data_exporter.py      # Xuất dữ liệu ra CSV & JSON
+├── config.json           # File cấu hình toàn diện
+├── keywords.txt          # Danh sách từ khóa phim mẫu
+├── run.bat               # File click đúp chuột chạy nhanh trên Windows
+├── requirements.txt      # Thư viện yêu cầu
+└── output/               # Thư mục lưu trữ kết quả
+    ├── comments_posted.csv
+    ├── movies_crawled.csv
+    ├── visit_history.csv
+    └── screenshots/
+```
+
+---
+
+## 🚀 Hướng Dẫn Sử Dụng
 
 ### 1. Bấm đúp chuột chạy nhanh
-Click đúp vào file **[`run.bat`](file:///c:/auto-crawl-bot-cmt-web/run.bat)** trên máy tính.
+Bấm đúp chuột vào file **[`run.bat`](file:///c:/auto-crawl-bot-cmt-web/run.bat)** trên máy tính.
 
 ---
 
 ### 2. Các câu lệnh chạy tùy biến
 
-* **Chạy tự động bình luận mặc định:**
-  ```powershell
-  python bot.py
-  ```
+#### A. Chạy chế độ hiển thị trình duyệt (Khuyên dùng để theo dõi bot lướt web):
+```powershell
+python bot.py --visible
+```
 
-* **Chỉ định tên người bình luận của bạn:**
-  ```powershell
-  python bot.py --author "Hoàng Nam"
-  ```
+#### B. Chạy hẹn giờ lặp lại (Ví dụ: Cứ 60 phút chạy 1 lần):
+```powershell
+python bot.py -i 60 --visible
+```
 
-* **Mở trình duyệt để quan sát bot tự điền & gửi bình luận:**
-  ```powershell
-  python bot.py --visible
-  ```
+#### C. Chạy bình luận với Gemini AI:
+```powershell
+python bot.py --ai-key "AIzaSy..." --visible
+```
+*(Hoặc điền key trực tiếp vào mục `gemini_api_key` trong `config.json`)*
 
-* **Tắt tính năng bình luận (chỉ cào dữ liệu):**
-  ```powershell
-  python bot.py --no-comment
-  ```
+#### D. Chạy qua Proxy:
+```powershell
+python bot.py --proxy "http://username:password@ip:port"
+```
 
-* **Chạy với 1 từ khóa phim cụ thể:**
-  ```powershell
-  python bot.py -k "xem phim motchill vietsub" -t 1 --visible
-  ```
+#### E. Chạy gửi thông báo về Telegram:
+```powershell
+python bot.py --tg-token "BOT_TOKEN" --tg-chat "CHAT_ID"
+```
+
+#### F. Chỉ cào dữ liệu (Tắt bình luận):
+```powershell
+python bot.py --no-comment
+```
 
 ---
 
-## ⚙️ Cấu Hình (`config.json`)
-
-Mở file [`config.json`](file:///c:/auto-crawl-bot-cmt-web/config.json) để tùy biến nội dung bình luận:
+## ⚙️ Cấu Hình Nâng Cao (`config.json`)
 
 ```json
 {
   "comment": {
     "auto_comment": true,
-    "custom_name": "",
-    "custom_templates": [
-      "Phim {movie_name} xem cuốn quá, diễn xuất đỉnh thực sự!",
-      "Vừa xem xong {movie_name}, kịch bản bất ngờ phút cuối ghê.",
-      "Bản vietsub của {movie_name} nét căng, cảm ơn web đã cập nhật nhanh nhé!"
-    ]
+    "use_ai": true,
+    "gemini_api_key": "ĐIỀN_API_KEY_NẾU_MUỐN_DÙNG_AI",
+    "custom_name": ""
+  },
+  "browser": {
+    "use_persistent_profile": true,
+    "profile_dir": "user_profile",
+    "headless": false
+  },
+  "proxy": {
+    "enabled": false,
+    "server": "http://ip:port",
+    "username": "",
+    "password": ""
+  },
+  "telegram": {
+    "enabled": false,
+    "bot_token": "BOT_TOKEN_CỦA_BẠN",
+    "chat_id": "CHAT_ID_CỦA_BẠN",
+    "send_screenshot": true
+  },
+  "scheduler": {
+    "loop_mode": false,
+    "interval_minutes": 60
   }
 }
 ```
-
-* **`auto_comment`**: `true` để bật tự động bình luận, `false` để tắt.
-* **`custom_name`**: Để trống `""` bot sẽ tự xoay vòng tên ngẫu nhiên (Minh Tuấn, Hoàng Nam, Khánh Linh...), hoặc điền tên bạn muốn.
-* **`custom_templates`**: Các mẫu câu bạn muốn bot sử dụng (dùng `{movie_name}` ở vị trí muốn chèn tên phim).
-
----
-
-## 📁 Kết Quả Xuất Ra (`output/`)
-
-* [`output/comments_posted.csv`](file:///c:/auto-crawl-bot-cmt-web/output/comments_posted.csv): Danh sách lịch sử các bình luận đã gửi kèm trạng thái.
-* [`output/movies_crawled.csv`](file:///c:/auto-crawl-bot-cmt-web/output/movies_crawled.csv): Bảng thông tin phim đã cào (Tên, Năm, Mô tả, Ảnh bìa, Bình luận cũ).
-* [`output/visit_history.csv`](file:///c:/auto-crawl-bot-cmt-web/output/visit_history.csv): Lịch sử phiên truy cập Google và thời gian ở lại trang.
-* [`output/screenshots/`](file:///c:/auto-crawl-bot-cmt-web/output/screenshots/): Ảnh chụp màn hình website thực tế.

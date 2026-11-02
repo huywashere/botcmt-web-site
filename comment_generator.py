@@ -1,5 +1,6 @@
 import random
 import re
+from ai_commenter import AICommenter
 
 NAMES = [
     "Minh Tuấn", "Hoàng Nam", "Khánh Linh", "Bảo Trâm", "Hải Đăng",
@@ -22,7 +23,10 @@ SMART_COMMENT_TEMPLATES = [
 ]
 
 class CommentGenerator:
-    """Tạo bình luận thông minh, tự nhiên theo ngữ cảnh phim và người bình luận."""
+    """Tạo bình luận thông minh (kết hợp AI Gemini và templates thông minh)."""
+
+    def __init__(self, ai_api_key: str = "", use_ai: bool = True):
+        self.ai_commenter = AICommenter(api_key=ai_api_key, enabled=use_ai)
 
     @staticmethod
     def clean_movie_title(raw_title: str) -> str:
@@ -44,10 +48,8 @@ class CommentGenerator:
                 meaningful_parts.append(p_strip)
 
         if meaningful_parts:
-            # Chọn phần chứa tên phim (thường là phần đầu tiên có ý nghĩa)
             title = meaningful_parts[0]
 
-        # Bỏ các tag chất lượng & loại phim
         patterns_to_remove = [
             r'\(?Vietsub\)?', r'\(?Thuyết\s*Minh\)?', r'\(?Lồng\s*Tiếng\)?',
             r'\(?Full\s*HD\)?', r'\(?HD\)?', r'\(?4K\)?',
@@ -58,24 +60,33 @@ class CommentGenerator:
         for p in patterns_to_remove:
             title = re.sub(p, '', title, flags=re.IGNORECASE)
 
-        # Dọn dẹp ký tự thừa còn sót lại như dấu phẩy, gạch chéo, dấu chấm
         title = re.sub(r'[,|/–\-]+', ' ', title)
         title = re.sub(r'\s+', ' ', title).strip()
 
         return title if len(title) >= 3 else "bộ phim này"
 
-    @staticmethod
-    def generate_comment(movie_name: str, custom_templates: list = None) -> str:
-        """Tạo 1 bình luận thông minh mang phong cách người xem phim chân thật."""
-        clean_name = CommentGenerator.clean_movie_title(movie_name)
+    def generate_comment(self, movie_name: str, description: str = "", custom_templates: list = None) -> tuple:
+        """
+        Tạo bình luận thông minh.
+        Ưu tiên dùng Gemini AI nếu có cấu hình.
+        Trả về: (câu bình luận, nguồn: 'AI Gemini' hoặc 'Template')
+        """
+        clean_name = self.clean_movie_title(movie_name)
 
+        # 1. Thử dùng AI Gemini
+        if self.ai_commenter.enabled:
+            ai_comment = self.ai_commenter.generate_ai_comment(clean_name, description)
+            if ai_comment and len(ai_comment) > 10:
+                return ai_comment, "AI Gemini"
+
+        # 2. Dùng Template thông minh tự nhiên
         templates = SMART_COMMENT_TEMPLATES
         if custom_templates and len(custom_templates) > 0:
             templates = custom_templates + SMART_COMMENT_TEMPLATES
 
         template = random.choice(templates)
         comment = template.format(movie_name=clean_name)
-        return comment
+        return comment, "Template"
 
     @staticmethod
     def generate_nickname() -> str:

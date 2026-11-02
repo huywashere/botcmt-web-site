@@ -2,5 +2,6 @@ __pycache__/
 *.pyc
 *.pyo
 output/screenshots/
+user_profile/
 .vscode/
 .idea/

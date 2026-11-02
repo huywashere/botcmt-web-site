@@ -9,6 +9,7 @@ from playwright.sync_api import sync_playwright, Page, BrowserContext
 from movie_extractor import MovieExtractor
 from comment_generator import CommentGenerator
 from comment_poster import CommentPoster
+from telegram_notifier import TelegramNotifier
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -24,6 +25,21 @@ class GoogleTopBot:
         self.console = console
         self.comment_poster = CommentPoster(log_fn=self.log)
 
+        # Khởi tạo Telegram Notifier
+        tg_cfg = self.config.get("telegram", {})
+        self.notifier = TelegramNotifier(
+            bot_token=tg_cfg.get("bot_token", ""),
+            chat_id=tg_cfg.get("chat_id", ""),
+            enabled=tg_cfg.get("enabled", False)
+        )
+
+        # Khởi tạo Comment Generator (Hỗ trợ AI Gemini)
+        cmt_cfg = self.config.get("comment", {})
+        self.comment_gen = CommentGenerator(
+            ai_api_key=cmt_cfg.get("gemini_api_key", ""),
+            use_ai=cmt_cfg.get("use_ai", True)
+        )
+
     def log(self, message: str, style: str = ""):
         if self.console:
             if style:
@@ -35,41 +51,68 @@ class GoogleTopBot:
 
     def _init_browser(self, p):
         browser_cfg = self.config.get("browser", {})
+        proxy_cfg = self.config.get("proxy", {})
         headless = browser_cfg.get("headless", False)
         slow_mo = browser_cfg.get("slow_mo_ms", 30)
         width = browser_cfg.get("window_width", 1280)
         height = browser_cfg.get("window_height", 800)
+        use_persistent = browser_cfg.get("use_persistent_profile", True)
+        profile_dir = browser_cfg.get("profile_dir", "user_profile")
 
-        browser = p.chromium.launch(
-            headless=headless,
-            slow_mo=slow_mo,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-infobars",
-                "--window-size=1280,800"
-            ]
-        )
+        # Cấu hình Proxy nếu có
+        proxy_dict = None
+        if proxy_cfg.get("enabled") and proxy_cfg.get("server"):
+            proxy_dict = {"server": proxy_cfg.get("server")}
+            if proxy_cfg.get("username"):
+                proxy_dict["username"] = proxy_cfg.get("username")
+            if proxy_cfg.get("password"):
+                proxy_dict["password"] = proxy_cfg.get("password")
+            self.log(f"🌐 Đang sử dụng Proxy: {proxy_cfg.get('server')}", "cyan")
+
+        browser_args = [
+            "--disable-blink-features=AutomationControlled",
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-infobars",
+            f"--window-size={width},{height}"
+        ]
 
         user_agent = random.choice(USER_AGENTS)
-        context = browser.new_context(
-            user_agent=user_agent,
-            locale="vi-VN",
-            viewport={"width": width, "height": height}
-        )
 
-        context.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined
-            });
-            Object.defineProperty(navigator, 'plugins', {
-                get: () => [1, 2, 3, 4, 5]
-            });
-            Object.defineProperty(navigator, 'languages', {
-                get: () => ['vi-VN', 'vi', 'en-US', 'en']
-            });
-        """)
+        stealth_js = """
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+            Object.defineProperty(navigator, 'languages', { get: () => ['vi-VN', 'vi', 'en-US', 'en'] });
+        """
+
+        if use_persistent:
+            os.makedirs(profile_dir, exist_ok=True)
+            self.log(f"📁 Lưu phiên đăng nhập trình duyệt (Profile): '{profile_dir}'", "dim")
+            context = p.chromium.launch_persistent_context(
+                user_data_dir=profile_dir,
+                headless=headless,
+                slow_mo=slow_mo,
+                args=browser_args,
+                proxy=proxy_dict,
+                user_agent=user_agent,
+                locale="vi-VN",
+                viewport={"width": width, "height": height}
+            )
+            context.add_init_script(stealth_js)
+            browser = None
+        else:
+            browser = p.chromium.launch(
+                headless=headless,
+                slow_mo=slow_mo,
+                args=browser_args,
+                proxy=proxy_dict
+            )
+            context = browser.new_context(
+                user_agent=user_agent,
+                locale="vi-VN",
+                viewport={"width": width, "height": height}
+            )
+            context.add_init_script(stealth_js)
 
         return browser, context
 
@@ -83,7 +126,7 @@ class GoogleTopBot:
 
         with sync_playwright() as p:
             browser, context = self._init_browser(p)
-            search_page = context.new_page()
+            search_page = context.pages[0] if context.pages else context.new_page()
 
             try:
                 for idx, keyword in enumerate(keywords, 1):
@@ -103,8 +146,11 @@ class GoogleTopBot:
             except Exception as e:
                 self.log(f"❌ Lỗi ngoài ý muốn: {e}", "red")
             finally:
-                self.log("\n🧹 Đang đóng trình duyệt...", "dim")
-                browser.close()
+                self.log("\n🧹 Đang lưu phiên và đóng trình duyệt...", "dim")
+                if browser:
+                    browser.close()
+                else:
+                    context.close()
                 self.log("✅ Hoàn tất toàn bộ phiên cào & bình luận web phim!", "bold green")
 
     def _process_keyword(self, page: Page, context: BrowserContext, keyword: str):
@@ -161,7 +207,7 @@ class GoogleTopBot:
 
         time.sleep(1.5)
 
-        # 5. Thu thập & Lọc kết quả web phim (hỗ trợ cuộn Google để tìm thêm nếu trang 1 chưa đủ)
+        # 5. Thu thập & Lọc kết quả web phim
         selected_movie_links = []
         seen_hrefs = set()
 
@@ -342,17 +388,27 @@ class GoogleTopBot:
             visited_data["stay_seconds"] = elapsed
             self.log(f"   ⏱️ Đã ở lại web phim {elapsed}s", "green")
 
-            # 7. TỰ ĐỘNG BÌNH LUẬN THÔNG MINH
+            # 7. TỰ ĐỘNG BÌNH LUẬN THÔNG MINH (KẾT HỢP GEMINI AI HOẶC TEMPLATES)
+            cmt_result = {"success": False, "message": "Chưa bình luận"}
+            smart_comment = ""
+            author_name = ""
+
             if auto_comment:
                 movie_name = movie_info.get("movie_name", final_title)
+                movie_desc = movie_info.get("description", "")
                 custom_name = comment_cfg.get("custom_name")
-                author_name = custom_name if custom_name else CommentGenerator.generate_nickname()
-                author_email = CommentGenerator.generate_email(author_name)
+                author_name = custom_name if custom_name else self.comment_gen.generate_nickname()
+                author_email = self.comment_gen.generate_email(author_name)
                 custom_templates = comment_cfg.get("custom_templates", [])
 
-                smart_comment = CommentGenerator.generate_comment(movie_name, custom_templates)
+                # Tạo bình luận (AI hoặc Template)
+                smart_comment, cmt_source = self.comment_gen.generate_comment(
+                    movie_name=movie_name,
+                    description=movie_desc,
+                    custom_templates=custom_templates
+                )
 
-                self.log(f"   💬 [Tự động bình luận] Đang soạn bình luận thông minh...", "cyan")
+                self.log(f"   💬 [Tự động bình luận] Nguồn: [{cmt_source}]", "cyan")
                 self.log(f"      • Người gửi: [bold]{author_name}[/bold]", "white")
                 self.log(f"      • Nội dung: [italic yellow]\"{smart_comment}\"[/italic yellow]", "white")
 
@@ -374,19 +430,40 @@ class GoogleTopBot:
                     "url": final_url,
                     "author": author_name,
                     "comment_text": smart_comment,
+                    "source": cmt_source,
                     "success": cmt_result.get("success"),
                     "message": cmt_result.get("message")
                 })
+
+            # Chụp ảnh màn hình lưu bằng chứng
+            screenshot_path = ""
+            if take_screenshot:
+                screenshot_path = self._take_screenshot(new_page, keyword, rank, final_url)
+                visited_data["screenshot"] = screenshot_path
+
+            # Gửi thông báo về Telegram nếu có bật
+            if self.notifier.enabled:
+                movie_name = movie_info.get("movie_name", final_title)
+                status_icon = "✅ Thành công" if cmt_result.get("success") else "ℹ️ Đã xem"
+                tg_caption = (
+                    f"🎬 *BOT CÀO PHIM & BÌNH LUẬN*\n"
+                    f"🍿 *Phim:* {movie_name}\n"
+                    f"🌐 *Website:* {final_url[:70]}\n"
+                    f"👤 *Tác giả:* {author_name or 'Ẩn danh'}\n"
+                    f"💬 *Bình luận:* \"{smart_comment}\"\n"
+                    f"📊 *Trạng thái:* {status_icon}\n"
+                    f"⏱️ *Thời gian xem:* {elapsed}s"
+                )
+                if screenshot_path and os.path.exists(screenshot_path):
+                    self.notifier.send_photo(screenshot_path, tg_caption)
+                else:
+                    self.notifier.send_message(tg_caption)
+                self.log("   📱 Đã gửi báo cáo tiến độ về Telegram!", "cyan")
 
             # Duyệt tập/link nội bộ nếu bật
             if visit_internal:
                 internal_clicked = self._visit_internal_page(new_page, final_url)
                 visited_data["internal_visited"] = internal_clicked
-
-            # Chụp ảnh màn hình lưu bằng chứng
-            if take_screenshot:
-                screenshot_filename = self._take_screenshot(new_page, keyword, rank, final_url)
-                visited_data["screenshot"] = screenshot_filename
 
         except Exception as e:
             visited_data["status"] = f"ERROR: {str(e)[:100]}"
