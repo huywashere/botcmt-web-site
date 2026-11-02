@@ -220,3 +220,4 @@ class TelegramController:
             self.send_message("ℹ️ Hiện tại không có tiến trình cào nào đang chạy.")
         else:
             self.send_message("🛑 Đã gửi tín hiệu dừng tới bot.")
+

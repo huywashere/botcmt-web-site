@@ -176,20 +176,62 @@ class GoogleTopBot:
             context.on("page", handle_new_page)
 
     def _dismiss_ad_overlays(self, page: Page):
-        """Xóa bỏ các banner quảng cáo nổi che khuất nội dung hoặc nút bình luận."""
+        """
+        Bảo vệ siêu cấp: Tìm và bấm nút [X] tắt quảng cáo, nhấn phím ESC
+        và xóa bỏ mọi banner quảng cáo nổi che khuất nội dung hoặc nút bình luận.
+        """
         try:
+            # 1. Nhấn ESC để đóng các modal popup quảng cáo
+            page.keyboard.press("Escape")
+        except Exception:
+            pass
+
+        try:
+            # 2. Tìm và click nút tắt [X] nếu có
+            close_selectors = [
+                ".close-ad", ".btn-close", ".close-popup", ".ad-close",
+                "button:has-text('Đóng')", "span:has-text('Đóng')", "a:has-text('Đóng')",
+                "button:has-text('Bỏ qua')", "a:has-text('Bỏ qua')", ".skip-ad",
+                "[aria-label='Close']", ".modal-close", ".popup-close"
+            ]
+            for sel in close_selectors:
+                btn = page.locator(sel).first
+                if btn.count() > 0 and btn.is_visible():
+                    btn.click(timeout=1000)
+                    time.sleep(0.3)
+                    break
+        except Exception:
+            pass
+
+        try:
+            # 3. Chạy script diệt triệt để các banner, iframe quảng cáo và overlay z-index cao
             page.evaluate("""() => {
                 const selectors = [
                     '.floating-banner', '.ads-overlay', '#popup-ad', '.popup-wrapper',
                     'div[id*="ad-"]', 'div[class*="popup-banner"]', '.ad-box',
                     'iframe[src*="ad"]', '.banner-top', '.banner-bottom', '.ad-sticky',
-                    '#banner-bottom', '.adsbox', '.qc-container'
+                    '#banner-bottom', '.adsbox', '.qc-container', '.banner-qc',
+                    '.float-ck', '#float_banner'
                 ];
                 selectors.forEach(sel => {
                     document.querySelectorAll(sel).forEach(el => {
                         el.style.display = 'none';
                         el.remove();
                     });
+                });
+
+                // Diệt các div đè toàn màn hình có z-index cao che nút
+                document.querySelectorAll('div, section, aside').forEach(el => {
+                    const style = window.getComputedStyle(el);
+                    if ((style.position === 'fixed' || style.position === 'absolute') && parseInt(style.zIndex || '0') >= 999) {
+                        const rect = el.getBoundingClientRect();
+                        if (rect.width * rect.height > window.innerWidth * window.innerHeight * 0.4 || rect.bottom >= window.innerHeight - 5) {
+                            if (!el.querySelector('video') && !el.querySelector('header') && !el.id.includes('player')) {
+                                el.style.display = 'none';
+                                el.remove();
+                            }
+                        }
+                    }
                 });
             }""")
         except Exception:

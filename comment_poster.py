@@ -9,6 +9,20 @@ class CommentPoster:
     def __init__(self, log_fn=None):
         self.log = log_fn if log_fn else print
 
+    @staticmethod
+    def _safe_click(element, delay=0):
+        """Click an toàn: Tự động dùng force=True hoặc dispatch_event nếu bị banner quảng cáo che khuất."""
+        try:
+            element.click(timeout=2500, delay=delay)
+        except Exception:
+            try:
+                element.click(force=True, timeout=1500, delay=delay)
+            except Exception:
+                try:
+                    element.dispatch_event("click")
+                except Exception:
+                    pass
+
     def vote_5_stars(self, page: Page) -> bool:
         """Tự động tìm nút vote 5 sao trên trang phim và bấm đánh giá."""
         star_selectors = [
@@ -204,7 +218,7 @@ class CommentPoster:
                     break
 
             if name_input:
-                name_input.click()
+                self._safe_click(name_input)
                 name_input.fill("")
                 for ch in author_name:
                     name_input.type(ch, delay=random.randint(40, 80))
@@ -224,7 +238,7 @@ class CommentPoster:
                 for sel in email_selectors:
                     el = page.locator(sel).first
                     if el.count() > 0 and el.is_visible():
-                        el.click()
+                        self._safe_click(el)
                         el.fill("")
                         for ch in email:
                             el.type(ch, delay=random.randint(25, 60))
@@ -232,7 +246,7 @@ class CommentPoster:
                         break
 
             # 4. Nhập nội dung bình luận vào ô Textarea
-            comment_box.click()
+            self._safe_click(comment_box)
             comment_box.fill("")
             for ch in comment_text:
                 comment_box.type(ch, delay=random.randint(25, 65))
@@ -268,7 +282,7 @@ class CommentPoster:
                     break
 
             if submit_btn:
-                submit_btn.click()
+                self._safe_click(submit_btn)
             else:
                 comment_box.press("Enter")
 
