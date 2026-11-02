@@ -77,6 +77,16 @@ Bot tự động hóa tìm kiếm, cào dữ liệu và **bình luận thông mi
 ### 12. ⏰ Chế Độ Hẹn Giờ Chạy Lặp Tự Động (Scheduler / Loop Mode)
 - Tự động chạy định kỳ (ví dụ mỗi 60 phút thức dậy 1 lần) để quét các phim mới phát hành trên Motchill/Phimmoi/Rophim, tương tác để lại bình luận rồi tự động nghỉ ngơi.
 
+### 13. ⚡ Cào & Bình Luận Đa Luồng Đồng Thời (Multi-Threading Concurrency)
+- **Cào nhiều web cùng lúc:** Thay vì cào từng web lần lượt, bot khởi tạo nhiều Worker chạy song song độc lập (`-w 3` hoặc `--workers 4`).
+  - Luồng 1 cào & bình luận trên **Motchill**
+  - Luồng 2 cào & bình luận trên **Motphim**
+  - Luồng 3 cào & bình luận trên **Phimmoi**
+  - Luồng 4 cào & bình luận trên **Rophim**
+- **Tăng tốc độ gấp 3x - 5x:** Xử lý toàn bộ các web mục tiêu chỉ trong thời gian của 1 web!
+- **An toàn luồng (Thread-Safe):** Toàn bộ bộ nhớ lịch sử (`history_mgr`), file báo cáo CSV/JSON (`data_exporter`) và thông báo Telegram đều được bảo vệ bằng Thread Lock, không bao giờ bị ghi đè hay xung đột dữ liệu.
+- **Profile độc lập:** Mỗi worker sở hữu thư mục session profile riêng (`user_profile/worker_X`), không lo xung đột file khóa của Chromium (`SingletonLock`).
+
 ---
 
 ## 📁 Cấu Trúc Dự Án

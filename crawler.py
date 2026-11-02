@@ -2,7 +2,9 @@ import os
 import random
 import re
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright, Page, BrowserContext
 
@@ -25,7 +27,15 @@ class GoogleTopBot:
         self.config = config
         self.exporter = exporter
         self.console = console
+        self._log_lock = threading.Lock()
+        self._tg_lock = threading.Lock()
         self.comment_poster = CommentPoster(log_fn=self.log)
+
+        # Cấu hình đa luồng (Multi-threading / Concurrency)
+        concurrency_cfg = self.config.get("concurrency", {})
+        self.concurrency_enabled = concurrency_cfg.get("enabled", True)
+        self.max_workers = concurrency_cfg.get("max_workers", 3)
+        self.stagger_delay = concurrency_cfg.get("stagger_delay_seconds", 1.5)
 
         # Khởi tạo Telegram Notifier
         tg_cfg = self.config.get("telegram", {})
@@ -59,16 +69,26 @@ class GoogleTopBot:
         # Tập hợp các domain đã bình luận
         self.commented_domains = set()
 
-    def log(self, message: str, style: str = ""):
-        if self.console:
-            if style:
-                self.console.print(f"[{style}]{message}[/{style}]")
-            else:
-                self.console.print(message)
-        else:
-            print(message)
+    def log(self, message: str, style: str = "", worker_id: int = None, brand: str = ""):
+        prefix = ""
+        if brand and worker_id is not None:
+            prefix = f"[bold cyan][Luồng {worker_id} - {brand.upper()}][/bold cyan] "
+        elif worker_id is not None:
+            prefix = f"[bold cyan][Luồng {worker_id}][/bold cyan] "
+        elif brand:
+            prefix = f"[{brand.upper()}] "
 
-    def _init_browser(self, p):
+        full_msg = f"{prefix}{message}"
+        with self._log_lock:
+            if self.console:
+                if style:
+                    self.console.print(f"[{style}]{full_msg}[/{style}]")
+                else:
+                    self.console.print(full_msg)
+            else:
+                print(full_msg)
+
+    def _init_browser(self, p, worker_id: int = 0):
         browser_cfg = self.config.get("browser", {})
         proxy_cfg = self.config.get("proxy", {})
         headless = browser_cfg.get("headless", False)
@@ -76,7 +96,8 @@ class GoogleTopBot:
         width = browser_cfg.get("window_width", 1280)
         height = browser_cfg.get("window_height", 800)
         use_persistent = browser_cfg.get("use_persistent_profile", True)
-        profile_dir = browser_cfg.get("profile_dir", "user_profile")
+        base_profile = browser_cfg.get("profile_dir", "user_profile")
+        profile_dir = os.path.join(base_profile, f"worker_{worker_id}") if worker_id > 0 else base_profile
 
         # Cấu hình Proxy nếu có
         proxy_dict = None
@@ -86,7 +107,8 @@ class GoogleTopBot:
                 proxy_dict["username"] = proxy_cfg.get("username")
             if proxy_cfg.get("password"):
                 proxy_dict["password"] = proxy_cfg.get("password")
-            self.log(f"🌐 Đang sử dụng Proxy: {proxy_cfg.get('server')}", "cyan")
+            if worker_id <= 1:
+                self.log(f"🌐 Đang sử dụng Proxy: {proxy_cfg.get('server')}", "cyan")
 
         browser_args = [
             "--disable-blink-features=AutomationControlled",
@@ -111,7 +133,8 @@ class GoogleTopBot:
 
         if use_persistent:
             os.makedirs(profile_dir, exist_ok=True)
-            self.log(f"📁 Lưu phiên đăng nhập trình duyệt (Profile): '{profile_dir}'", "dim")
+            if worker_id == 0:
+                self.log(f"📁 Lưu phiên đăng nhập trình duyệt (Profile): '{profile_dir}'", "dim")
             context = p.chromium.launch_persistent_context(
                 user_data_dir=profile_dir,
                 headless=headless,
@@ -382,13 +405,176 @@ class GoogleTopBot:
 
         self.log(f"\n✨ Đã tìm được {len(selected_movie_links)} web phim mục tiêu để cào & bình luận.\n", "bold green")
 
-        # 6. Truy cập & Cào/Bình luận từng trang web phim
-        rank = 0
-        for link_loc, title, href in selected_movie_links:
-            rank += 1
-            self.log(f"👉 [Top {rank}] Đang mở web: {title}", "bold cyan")
-            self._visit_movie_website(context, link_loc, rank, keyword, title, allowed_domains)
-            time.sleep(random.uniform(2.5, 4.0))
+        # 6. Truy cập & Cào/Bình luận các trang web phim (Hỗ trợ Đa luồng)
+        is_multi_threaded = self.concurrency_enabled and self.max_workers > 1 and len(selected_movie_links) > 1
+
+        if is_multi_threaded:
+            actual_workers = min(self.max_workers, len(selected_movie_links))
+            self.log(f"\n🚀 [ĐA LUỒNG] Kích hoạt {actual_workers} luồng đồng thời để cào & bình luận {len(selected_movie_links)} web khác nhau!", "bold green")
+
+            tasks = []
+            for rank, (link_loc, title, href) in enumerate(selected_movie_links, 1):
+                brand = self._get_domain_brand(href, allowed_domains)
+                tasks.append({
+                    "rank": rank,
+                    "title": title,
+                    "url": href,
+                    "keyword": keyword,
+                    "allowed_domains": allowed_domains,
+                    "domain_brand": brand
+                })
+
+            with ThreadPoolExecutor(max_workers=actual_workers) as executor:
+                future_to_task = {}
+                for idx, t in enumerate(tasks, 1):
+                    future = executor.submit(self._worker_crawl_website, idx, t)
+                    future_to_task[future] = t
+                    if idx < len(tasks):
+                        time.sleep(self.stagger_delay)
+
+                for future in as_completed(future_to_task):
+                    t = future_to_task[future]
+                    try:
+                        future.result()
+                        self.log(f"✅ Hoàn tất luồng xử lý web: {t['title'][:40]}", "bold green", worker_id=t['rank'], brand=t['domain_brand'])
+                    except Exception as e:
+                        self.log(f"❌ Luồng gặp lỗi: {e}", "red", worker_id=t['rank'], brand=t['domain_brand'])
+        else:
+            # Chạy tuần tự (Đơn luồng)
+            rank = 0
+            for link_loc, title, href in selected_movie_links:
+                rank += 1
+                self.log(f"👉 [Top {rank}] Đang mở web: {title}", "bold cyan")
+                self._visit_movie_website(context, link_loc, rank, keyword, title, allowed_domains)
+                time.sleep(random.uniform(2.5, 4.0))
+
+    def _worker_crawl_website(self, worker_id: int, task: dict):
+        """Worker độc lập xử lý 1 website phim trong môi trường đa luồng."""
+        rank = task["rank"]
+        landing_title = task["title"]
+        target_url = task["url"]
+        keyword = task["keyword"]
+        allowed_domains = task["allowed_domains"]
+        domain_brand = task["domain_brand"]
+
+        self.log(f"🚀 Bắt đầu cào & tương tác web: {landing_title[:45]}...", "cyan", worker_id=worker_id, brand=domain_brand)
+
+        with sync_playwright() as p:
+            browser, context = self._init_browser(p, worker_id=worker_id)
+            self._setup_ad_and_popup_protection(context)
+            page = context.new_page()
+
+            try:
+                # 1. Mở trang web phim mục tiêu
+                try:
+                    page.goto(target_url, wait_until="domcontentloaded", timeout=25000)
+                except Exception:
+                    try:
+                        page.goto(target_url, wait_until="networkidle", timeout=20000)
+                    except Exception as e:
+                        self.log(f"⚠️ Lỗi kết nối web: {e}", "yellow", worker_id=worker_id, brand=domain_brand)
+                        return
+
+                self._dismiss_ad_overlays(page)
+                time.sleep(1.5)
+
+                actual_url = page.url
+                actual_title = page.title() or landing_title
+
+                # Kiểm tra domain loại trừ
+                movie_cfg = self.config.get("movie_filter", {})
+                excluded_domains = movie_cfg.get("excluded_domains", ["youtube.com", "facebook.com", "tiktok.com", "wikipedia.org"])
+                for exc in excluded_domains:
+                    if exc.lower() in actual_url.lower():
+                        self.log(f"⏩ Bỏ qua vì chuyển hướng vào domain loại trừ: {exc}", "yellow", worker_id=worker_id, brand=domain_brand)
+                        return
+
+                # Kiểm tra allowed domains
+                if allowed_domains and len(allowed_domains) > 0:
+                    is_match = any(d.lower() in actual_url.lower() or d.lower() in actual_title.lower() for d in allowed_domains)
+                    if not is_match:
+                        self.log(f"⏩ Bỏ qua: Website {actual_url} không thuộc danh sách mục tiêu", "yellow", worker_id=worker_id, brand=domain_brand)
+                        return
+
+                self.log(f"🌐 Đang mở hệ thống web: [bold cyan]{domain_brand.upper()}[/bold cyan] ({actual_url})", "blue", worker_id=worker_id, brand=domain_brand)
+
+                # 2. Tìm danh sách phim có TƯƠNG TÁC CAO NHẤT trên web này để bình luận
+                comment_cfg = self.config.get("comment", {})
+                prioritize_hot = comment_cfg.get("prioritize_hot_movies", True)
+                auto_comment = comment_cfg.get("auto_comment", True)
+                comments_per_web = comment_cfg.get("comments_per_website", 3)
+
+                hot_movies = []
+                if prioritize_hot and auto_comment:
+                    candidates = self._extract_high_engagement_movies(page, limit=comments_per_web * 4)
+                    if not self.force_recomment:
+                        fresh_movies = []
+                        for m in candidates:
+                            m_url = m.get("url", "")
+                            if self.history_mgr.is_commented(m_url):
+                                self.log(f"⏩ Bỏ qua phim đã bình luận trước: [dim]{m.get('title')}[/dim]", "dim", worker_id=worker_id, brand=domain_brand)
+                            else:
+                                fresh_movies.append(m)
+                        hot_movies = fresh_movies[:comments_per_web]
+                    else:
+                        hot_movies = candidates[:comments_per_web]
+
+                if hot_movies and len(hot_movies) > 0:
+                    self.log(f"🔥 [TƯƠNG TÁC CAO] Tìm thấy {len(hot_movies)} phim tương tác cao nhất:", "bold yellow", worker_id=worker_id, brand=domain_brand)
+                    for sub_idx, hot_m in enumerate(hot_movies, 1):
+                        target_movie_url = hot_m.get("url")
+                        target_movie_title = hot_m.get("title") or f"Phim Hot #{sub_idx}"
+                        category = hot_m.get("category", "Top Thịnh Hành")
+                        views_info = f"{hot_m.get('views', 0):,} lượt xem" if hot_m.get("views") else "Nổi bật nhất"
+
+                        self.log(f"👉 [Phim #{sub_idx}] {target_movie_title} ({category} | {views_info})", "cyan", worker_id=worker_id, brand=domain_brand)
+                        try:
+                            page.goto(target_movie_url, wait_until="domcontentloaded", timeout=20000)
+                            self._dismiss_ad_overlays(page)
+                            time.sleep(1.0)
+                        except Exception as e:
+                            self.log(f"⚠️ Không thể tải phim này: {e}", "dim", worker_id=worker_id, brand=domain_brand)
+                            continue
+
+                        self._process_single_movie_page(
+                            page=page,
+                            movie_url=page.url,
+                            preview_title=target_movie_title,
+                            keyword=keyword,
+                            rank=rank,
+                            sub_rank=sub_idx,
+                            domain_brand=domain_brand,
+                            engagement_info=f"{category} | {views_info}",
+                            worker_id=worker_id
+                        )
+
+                        if sub_idx < len(hot_movies):
+                            pause = random.randint(2, 4)
+                            time.sleep(pause)
+                else:
+                    # Trang hiện tại đã là trang chi tiết 1 bộ phim
+                    self._process_single_movie_page(
+                        page=page,
+                        movie_url=actual_url,
+                        preview_title=actual_title,
+                        keyword=keyword,
+                        rank=rank,
+                        sub_rank=1,
+                        domain_brand=domain_brand,
+                        engagement_info="Trang Chi Tiết Phim",
+                        worker_id=worker_id
+                    )
+
+            except Exception as e:
+                self.log(f"❌ Lỗi xử lý web: {e}", "red", worker_id=worker_id, brand=domain_brand)
+            finally:
+                try:
+                    if browser:
+                        browser.close()
+                    else:
+                        context.close()
+                except Exception:
+                    pass
 
     def _get_domain_brand(self, domain_or_url: str, allowed_domains: list) -> str:
         """Lấy tên thương hiệu của website (motchill, motphim, phimmoi, rophim...)."""
@@ -621,7 +807,7 @@ class GoogleTopBot:
                 except Exception:
                     pass
 
-    def _process_single_movie_page(self, page: Page, movie_url: str, preview_title: str, keyword: str, rank: int, sub_rank: int, domain_brand: str, engagement_info: str = "Tương tác cao"):
+    def _process_single_movie_page(self, page: Page, movie_url: str, preview_title: str, keyword: str, rank: int, sub_rank: int, domain_brand: str, engagement_info: str = "Tương tác cao", worker_id: int = None):
         behavior_cfg = self.config.get("behavior", {})
         movie_cfg = self.config.get("movie_filter", {})
         comment_cfg = self.config.get("comment", {})
@@ -789,8 +975,9 @@ class GoogleTopBot:
             movie_name = movie_info.get("movie_name", current_title)
             status_icon = "✅ Đã gửi bình luận" if cmt_result.get("success") else "ℹ️ Đã xem trang"
             cmt_type_label = "💬 *Trả lời bình luận:*" if is_reply else "💬 *Bình luận:*"
+            worker_tag = f" [Luồng {worker_id} - {domain_brand.upper()}]" if worker_id else f" [{domain_brand.upper()}]"
             tg_caption = (
-                f"🎬 *BOT CÀO PHIM & BÌNH LUẬN*\n\n"
+                f"🎬 *BOT CÀO PHIM & BÌNH LUẬN{worker_tag}*\n\n"
                 f"🍿 *Phim:* {movie_name}\n"
                 f"🔥 *Độ tương tác:* [{engagement_info}]\n"
                 f"🌐 *Trang web:* [{domain_brand.upper()}]\n"
@@ -800,11 +987,12 @@ class GoogleTopBot:
                 f"📊 *Trạng thái:* {status_icon}\n"
                 f"⏱️ *Thời gian xem:* {elapsed}s"
             )
-            if screenshot_path and os.path.exists(screenshot_path):
-                self.notifier.send_photo(screenshot_path, tg_caption)
-            else:
-                self.notifier.send_message(tg_caption)
-            self.log("      📱 Đã gửi báo cáo Telegram kèm link trực tiếp!", "cyan")
+            with self._tg_lock:
+                if screenshot_path and os.path.exists(screenshot_path):
+                    self.notifier.send_photo(screenshot_path, tg_caption)
+                else:
+                    self.notifier.send_message(tg_caption)
+            self.log("      📱 Đã gửi báo cáo Telegram kèm link trực tiếp!", "cyan", worker_id=worker_id, brand=domain_brand)
 
     def _simulate_reading(self, page: Page, total_duration: float):
         self.log("   📜 Đang cuộn trang xem danh sách phim / bài viết...", "dim")

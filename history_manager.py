@@ -1,16 +1,19 @@
 import json
 import os
+import threading
 import time
 from urllib.parse import urlparse
 
 class CommentHistoryManager:
     """
     Quản lý bộ nhớ lịch sử các phim đã được bình luận (Deduplication Memory).
-    Giúp bot không bình luận trùng lặp 2 lần trên cùng 1 bộ phim khi chạy lặp lại định kỳ.
+    Hỗ trợ Đa luồng an toàn (Thread-Safe) khi nhiều worker chạy song song.
+    Giúp bot không bình luận trùng lặp 2 lần trên cùng 1 bộ phim.
     """
 
     def __init__(self, history_file: str = "output/commented_history.json"):
         self.history_file = history_file
+        self._lock = threading.Lock()
         self.history = self._load()
 
     def _normalize_url(self, url: str) -> str:
@@ -36,7 +39,7 @@ class CommentHistoryManager:
         return {}
 
     def _save(self):
-        """Lưu lịch sử ra file JSON."""
+        """Lưu lịch sử ra file JSON (Đã bọc trong lock)."""
         try:
             os.makedirs(os.path.dirname(self.history_file) or ".", exist_ok=True)
             with open(self.history_file, "w", encoding="utf-8") as f:
@@ -45,24 +48,27 @@ class CommentHistoryManager:
             pass
 
     def is_commented(self, url: str) -> bool:
-        """Kiểm tra URL phim này đã từng được bình luận thành công chưa."""
-        norm = self._normalize_url(url)
-        return norm in self.history
+        """Kiểm tra URL phim này đã từng được bình luận thành công chưa (Thread-Safe)."""
+        with self._lock:
+            norm = self._normalize_url(url)
+            return norm in self.history
 
     def record_comment(self, url: str, movie_name: str, author: str, email: str, comment_text: str):
-        """Ghi nhận phim đã được bình luận thành công."""
-        norm = self._normalize_url(url)
-        self.history[norm] = {
-            "movie_name": movie_name,
-            "url": url,
-            "author": author,
-            "email": email,
-            "comment_text": comment_text,
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
-        }
-        self._save()
+        """Ghi nhận phim đã được bình luận thành công (Thread-Safe)."""
+        with self._lock:
+            norm = self._normalize_url(url)
+            self.history[norm] = {
+                "movie_name": movie_name,
+                "url": url,
+                "author": author,
+                "email": email,
+                "comment_text": comment_text,
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+            }
+            self._save()
 
     def count(self) -> int:
-        """Tổng số lượng phim duy nhất đã được bình luận."""
-        return len(self.history)
+        """Tổng số lượng phim duy nhất đã được bình luận (Thread-Safe)."""
+        with self._lock:
+            return len(self.history)
 

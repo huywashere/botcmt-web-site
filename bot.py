@@ -243,6 +243,8 @@ def main():
     parser.add_argument("--tg-chat", type=str, help="Chat ID Telegram để nhận thông báo")
     parser.add_argument("--remote", "--tg-remote", action="store_true", help="Chạy chế độ máy chủ điều khiển từ xa qua Telegram (/crawl, /status, /add...)")
     parser.add_argument("--high-engagement", "--top-views", action="store_true", help="Ưu tiên tối đa các phim có tương tác cao (Hero Slider, BXH, Top lượt xem)")
+    parser.add_argument("-w", "--workers", "--threads", type=int, help="Số luồng chạy song song cào nhiều web cùng lúc (mặc định: 3)")
+    parser.add_argument("--no-multithread", action="store_true", help="Tắt chế độ đa luồng, chuyển về chạy đơn luồng tuần tự")
     parser.add_argument("--no-fake-watch", action="store_true", help="Tắt tính năng giả lập bấm xem video phim")
     parser.add_argument("--no-reply", action="store_true", help="Tắt chế độ trả lời bình luận của người khác (chỉ gửi cmt mới)")
 
@@ -314,6 +316,12 @@ def main():
     if args.no_vote:
         config.setdefault("interaction", {})["auto_vote_5_stars"] = False
 
+    if args.workers is not None:
+        config.setdefault("concurrency", {})["max_workers"] = args.workers
+        config["concurrency"]["enabled"] = args.workers > 1
+    if args.no_multithread:
+        config.setdefault("concurrency", {})["enabled"] = False
+
     if args.high_engagement:
         config.setdefault("comment", {})["prioritize_high_engagement"] = True
 
@@ -366,6 +374,13 @@ def main():
     # Proxy
     proxy_status = f"Đang BẬT ({config['proxy'].get('server')})" if config["proxy"].get("enabled") and config["proxy"].get("server") else "Không dùng Proxy (IP trực tiếp)"
     table.add_row("Trạng thái Proxy", proxy_status)
+
+    # Chế độ đa luồng
+    concurrency_cfg = config.get("concurrency", {})
+    workers_cnt = concurrency_cfg.get("max_workers", 3)
+    is_multi = concurrency_cfg.get("enabled", True) and workers_cnt > 1
+    multi_status = f"[bold green]BẬT ({workers_cnt} luồng cào song song nhiều web)[/bold green]" if is_multi else "[dim]Đơn luồng (Tuần tự từng web)[/dim]"
+    table.add_row("Cào & CMT Đa Luồng", multi_status)
 
     # Chặn quảng cáo & popup
     ad_status = "BẬT (Diệt popup & banner rác)" if config.get("ad_blocker", {}).get("enabled", True) else "TẮT"
