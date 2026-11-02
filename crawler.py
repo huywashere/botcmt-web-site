@@ -362,13 +362,28 @@ class GoogleTopBot:
                     except Exception:
                         pass
 
+                    actual_href = href
+                    if actual_href.startswith("/"):
+                        actual_href = f"https://www.google.com{actual_href}"
+                    if "/url?" in actual_href:
+                        try:
+                            parsed_u = urlparse(actual_href)
+                            import urllib.parse
+                            qs = urllib.parse.parse_qs(parsed_u.query)
+                            q_val = qs.get("q", [None])[0] or qs.get("url", [None])[0]
+                            if q_val and q_val.startswith("http"):
+                                actual_href = q_val
+                        except Exception:
+                            pass
+
                     seen_hrefs.add(href)
+                    seen_hrefs.add(actual_href)
 
                     # Kiểm tra bộ lọc web phim mục tiêu
                     if only_movies:
                         is_target = MovieExtractor.is_movie_content(
                             title=title,
-                            url=href,
+                            url=actual_href,
                             movie_keywords=movie_kws,
                             allowed_domains=allowed_domains,
                             excluded_domains=excluded_domains,
@@ -377,14 +392,13 @@ class GoogleTopBot:
                         if not is_target:
                             continue
 
-                    selected_movie_links.append((link, title, href))
-
                     detected_brand = "Web phim mục tiêu"
                     for b in allowed_domains:
-                        if b.lower() in f"{title} {href} {cite_text}".lower():
+                        if b.lower() in f"{title} {actual_href} {cite_text}".lower():
                             detected_brand = b.upper()
                             break
 
+                    selected_movie_links.append((link, title, actual_href, detected_brand))
                     self.log(f"   🎯 Khớp web [{detected_brand}]: {title[:55]}...", "green")
 
                     if len(selected_movie_links) >= top_limit:
@@ -413,15 +427,15 @@ class GoogleTopBot:
             self.log(f"\n🚀 [ĐA LUỒNG] Kích hoạt {actual_workers} luồng đồng thời để cào & bình luận {len(selected_movie_links)} web khác nhau!", "bold green")
 
             tasks = []
-            for rank, (link_loc, title, href) in enumerate(selected_movie_links, 1):
-                brand = self._get_domain_brand(href, allowed_domains)
+            for rank, item in enumerate(selected_movie_links, 1):
+                link_loc, title, href, detected_brand = item[0], item[1], item[2], item[3]
                 tasks.append({
                     "rank": rank,
                     "title": title,
                     "url": href,
                     "keyword": keyword,
                     "allowed_domains": allowed_domains,
-                    "domain_brand": brand
+                    "domain_brand": detected_brand
                 })
 
             with ThreadPoolExecutor(max_workers=actual_workers) as executor:
@@ -442,7 +456,8 @@ class GoogleTopBot:
         else:
             # Chạy tuần tự (Đơn luồng)
             rank = 0
-            for link_loc, title, href in selected_movie_links:
+            for item in selected_movie_links:
+                link_loc, title, href = item[0], item[1], item[2]
                 rank += 1
                 self.log(f"👉 [Top {rank}] Đang mở web: {title}", "bold cyan")
                 self._visit_movie_website(context, link_loc, rank, keyword, title, allowed_domains)
@@ -457,12 +472,15 @@ class GoogleTopBot:
         allowed_domains = task["allowed_domains"]
         domain_brand = task["domain_brand"]
 
+        if target_url.startswith("/"):
+            target_url = f"https://www.google.com{target_url}"
+
         self.log(f"🚀 Bắt đầu cào & tương tác web: {landing_title[:45]}...", "cyan", worker_id=worker_id, brand=domain_brand)
 
         with sync_playwright() as p:
             browser, context = self._init_browser(p, worker_id=worker_id)
-            self._setup_ad_and_popup_protection(context)
             page = context.new_page()
+            self._setup_ad_and_popup_protection(context)
 
             try:
                 # 1. Mở trang web phim mục tiêu
@@ -480,6 +498,11 @@ class GoogleTopBot:
 
                 actual_url = page.url
                 actual_title = page.title() or landing_title
+
+                # Cập nhật tên thương hiệu chuẩn xác sau khi chuyển hướng xong
+                detected = self._get_domain_brand(actual_url, allowed_domains)
+                if detected and detected != "Web phim mục tiêu":
+                    domain_brand = detected
 
                 # Kiểm tra domain loại trừ
                 movie_cfg = self.config.get("movie_filter", {})

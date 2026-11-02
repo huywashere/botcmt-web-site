@@ -135,21 +135,28 @@ class AdBlockerPro:
         except Exception:
             pass
 
-        # 3. Tự động đóng các tab lạ mở bất ngờ
+        # 3. Tự động đóng các tab lạ mở bất ngờ (Popups do quảng cáo kích hoạt)
         if self.block_popups:
             def handle_new_page(new_page: Page):
                 try:
-                    time.sleep(0.4)
-                    new_url = (new_page.url or "").lower()
-                    is_legit = any(d in new_url for d in allowed) or "google." in new_url
-                    is_ad = any(ad in new_url for ad in ["bet", "casino", "shopee", "lazada", "game", "nohu", "taixiu"])
-                    if not is_legit or is_ad or "about:blank" in new_url:
-                        new_page.close()
-                except Exception:
+                    # Tuyệt đối không đóng tab chính do bot chủ động tạo (opener là None)
                     try:
-                        new_page.close()
+                        if new_page.opener() is None:
+                            return
                     except Exception:
                         pass
+
+                    time.sleep(0.6)
+                    new_url = (new_page.url or "").lower()
+                    if not new_url or new_url == "about:blank":
+                        return
+
+                    is_legit = any(d in new_url for d in allowed) or "google." in new_url
+                    is_ad = any(ad in new_url for ad in ["bet", "casino", "shopee", "lazada", "game", "nohu", "taixiu", "ads", "pop"])
+                    if not is_legit or is_ad:
+                        new_page.close()
+                except Exception:
+                    pass
 
             context.on("page", handle_new_page)
 
